@@ -20,12 +20,34 @@
 
 /* camera_setup is sub_00032D90 (PAL 0x00032DC0). It turns its third
  * argument into aspect * width / height, builds the projection with
- * sub_000E6A00 (PAL 0x000E6E30: build_projection, whose other callers are
- * the front end's cameras), and stores tan(fov/2) at camera+0x31C and
- * aspect * tan(fov/2) at camera+0x320 -- the description in recomp_manual.c,
+ * sub_000E6A00 (PAL 0x000E6E30: build_projection), and stores tan(fov/2)
+ * at camera+0x31C and aspect * tan(fov/2) at camera+0x320.
+ * This matches the description in recomp_manual.c,
  * instruction for instruction. */
 extern void sub_00032D90_gen(void);
 void sub_00032D90(void) { ts2_camera_setup(sub_00032D90_gen); }
+
+/* The two decal passes build their own depth-biased projection from the
+ * viewport aspect. Give it the same aspect multiplier as the world camera. */
+extern void sub_000E6A00_gen(void);
+void sub_000E6A00(void)
+{
+    uint32_t caller = TS2_MEM32(g_esp);
+
+    if (caller == 0x00058574u || caller == 0x000593E7u) {
+        float widen = ts2_camera_widen();
+
+        if (widen != 1.0f)
+            TS2_MEMF(g_esp + 8u) *= widen;
+    }
+    sub_000E6A00_gen();
+}
+
+/* Experimental 16:9 aim diagnosis: US player aim/raycast update. This
+ * function combines reticle X/Y with camera+0x320/0x31C to form a world ray.
+ * RECOMP_TS2_AIM_WIDTH sets the scale when the game camera is widened. */
+extern void sub_00144890_gen(void);
+void sub_00144890(void) { ts2_aim_projection_probe(sub_00144890_gen); }
 
 /* front_end_scene is sub_0009F180 (PAL 0x0009F1C0): it builds its camera
  * through sub_00095CA0 (PAL 0x00095CE0), which calls build_projection. */

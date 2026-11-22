@@ -673,6 +673,53 @@ static RECOMP_MANUAL_TLS int      g_ts2_depth;
 
 #define TS2_MEM32(a) (*(volatile uint32_t *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
 
+/* Diagnostic only: determine whether the game's horizontal aiming ray is
+ * using the 16:9 camera extent while its reticle is still laid out at 4:3.
+ * The scale applies only with a widened game camera and RECOMP_TS2_AIM_WIDTH set.
+ * Example: RECOMP_TS2_AIM_WIDTH=0.75 to try 4:3 / 16:9.
+ *
+ * Camera pointer: US global 0x004B2F60; horizontal projection at camera+0x320.
+ * The original value is restored before returning to the rest of the game.
+ */
+static void ts2_aim_projection_probe(void (*aim_update)(void))
+{
+    static int initialized;
+    static float width_scale = 1.0f;
+    static int reported;
+    uint32_t camera;
+    float original;
+
+    if (!initialized) {
+        const char *s = getenv("RECOMP_TS2_AIM_WIDTH");
+        if (s && *s) {
+            char *end;
+            float n = strtof(s, &end);
+            if (*end == '\0' && n >= 0.4f && n <= 1.5f)
+                width_scale = n;
+        }
+        initialized = 1;
+    }
+    if (width_scale == 1.0f || ts2_camera_widen() == 1.0f) {
+        aim_update();
+        return;
+    }
+
+    camera = TS2_MEM32(0x004B2F60u);
+    if (!camera) {
+        aim_update();
+        return;
+    }
+    original = TS2_MEMF(camera + 0x320u);
+    if (!reported) {
+        fprintf(stderr, "[TS2-AIM] testing horizontal aim extent: %.3f -> %.3f (scale %.3f)\n",
+                original, original * width_scale, width_scale);
+        reported = 1;
+    }
+    TS2_MEMF(camera + 0x320u) = original * width_scale;
+    aim_update();
+    TS2_MEMF(camera + 0x320u) = original;
+}
+
 static int ts2_ui_parse_place(const char *s)
 {
     if (!strncmp(s, "stretch", 7)) return TS2_UI_STRETCH;
