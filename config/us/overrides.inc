@@ -144,10 +144,28 @@ void sub_00168BF0(void)
     sub_00168BF0_gen();
 }
 
-/* The object scheduler (00153F90) restores the shared float step from an
- * integer copy, so the later player update sees whole ticks. Give the
- * movement and bob code its original fractional frame step and leave the
- * scheduler's integer step available for events that consume whole ticks. */
+/* The two object schedulers temporarily publish whole-tick deltas for
+ * their callbacks. Both restore the shared float from the saved integer
+ * on exit, losing the elapsed-time delta for the next subsystem. Preserve
+ * the caller's float without changing the per-object scheduling cadence. */
+static void ts2_us_run_object_scheduler(void (*generated)(void))
+{
+    int preserve_step = g_ts2_us_free_step;
+    uint32_t saved_step = TS2_MEM32(TS2_US_GAME_FLOAT);
+
+    generated();
+    if (preserve_step)
+        TS2_MEM32(TS2_US_GAME_FLOAT) = saved_step;
+}
+
+extern void sub_00153F90_gen(void);
+void sub_00153F90(void) { ts2_us_run_object_scheduler(sub_00153F90_gen); }
+
+extern void sub_001542A0_gen(void);
+void sub_001542A0(void) { ts2_us_run_object_scheduler(sub_001542A0_gen); }
+
+/* The player keeps its explicit frame delta because the object dispatch
+ * can call it while an object-specific whole step is in effect. */
 extern void sub_001463D0_gen(void);
 void sub_001463D0(void)
 {
