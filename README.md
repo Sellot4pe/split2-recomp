@@ -108,7 +108,7 @@ In the launcher's Video tab:
 
 | Setting | What it does |
 | --- | --- |
-| Resolution | Renders at 1 to 8 times 640x480 and filters down. 2 is much sharper and costs little |
+| Resolution | Sets the internal rendering scale and starting window size. Fullscreen output follows the display. |
 | Widescreen | 16:9, with the wider camera and menus |
 | Texture sharpness | Anisotropic filtering, 1 to 16 |
 | Frame rate | Adaptive (the default), 60, 30, or uncapped |
