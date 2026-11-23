@@ -323,6 +323,23 @@ void sub_00025920(void)
     sub_00025920_gen();
 }
 
+/* The particle pool at 003602E0 only updates on whole simulation ticks.
+ * Its age and velocity integrators both read the float delta. Give them
+ * the time credited on this update, including catch-up ticks. */
+extern void sub_000B7E00_gen(void);
+void sub_000B7E00(void)
+{
+    if (g_ts2_us_free_step) {
+        uint32_t saved_step = TS2_MEM32(TS2_US_GAME_FLOAT);
+
+        TS2_MEMF(TS2_US_GAME_FLOAT) = (float)(int32_t)TS2_MEM32(TS2_US_GAME_STEP);
+        sub_000B7E00_gen();
+        TS2_MEM32(TS2_US_GAME_FLOAT) = saved_step;
+        return;
+    }
+    sub_000B7E00_gen();
+}
+
 /* present is sub_001CC100 (PAL 0x001CC530): the only function in the game's
  * code that calls D3DDevice_Swap. */
 extern void sub_001CC100_gen(void);
