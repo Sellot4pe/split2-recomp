@@ -347,6 +347,11 @@ void sub_00131DC0(void) { ts2_us_run_tick_update(sub_00131DC0_gen); }
 extern void sub_00023330_gen(void);
 void sub_00023330(void) { ts2_us_run_tick_update(sub_00023330_gen); }
 
+/* The HUD text queue skips zero-tick updates. Age its entries by the time
+ * those ticks cover, including the initial delay and the fade-out. */
+extern void sub_000BC370_gen(void);
+void sub_000BC370(void) { ts2_us_run_tick_update(sub_000BC370_gen); }
+
 /* present is sub_001CC100 (PAL 0x001CC530): the only function in the game's
  * code that calls D3DDevice_Swap. */
 extern void sub_001CC100_gen(void);

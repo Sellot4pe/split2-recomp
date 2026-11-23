@@ -11,6 +11,7 @@ extern GuestFn recomp_lookup(uint32_t);
 extern ptrdiff_t g_xbox_mem_offset;
 extern int recomp_dispatch_init(void);
 extern void sub_0019EF80(void), sub_000B7E00(void), sub_00131DC0(void), sub_00023330(void);
+extern void sub_000BB650(void), sub_000BC370(void);
 static _Alignas(16) uint8_t ram[8 << 20];
 #define U(addr) (*(uint32_t *)(ram + (addr)))
 #define F(addr) (*(float *)(ram + (addr)))
@@ -83,6 +84,45 @@ static void check_restart(void)
     }
 }
 
+static void check_hud_message(int hz)
+{
+    enum { player = 0x540000, text = 0x541000, queue = 0x4a8d20, message = queue + 0x38 };
+    memset(ram + queue, 0, 0x1254);
+    U(0x497100) = player;
+    U(player + 4) = 0;
+    U(0x364318) = 1; /* One visible message of type 1, as in 000BB5F0. */
+    memcpy(ram + text, "Test message", sizeof("Test message"));
+    g_esp = stack;
+    U(stack + 4) = 0;
+    U(stack + 8) = 1;
+    U(stack + 12) = text;
+    F(stack + 16) = 0.25f; /* Native enqueue starts the age at minus this delay. */
+    sub_000BB650();
+    if (g_esp != stack + 4 || g_fp_top || U(message) != 1 || F(message + 0x108) != -0.25f) {
+        puts("HUD message enqueue failed");
+        failed = 1;
+        return;
+    }
+    float lifetime = F(message + 0x114);
+    int expired = 0;
+    float age = 0.0f;
+    fixture_free_step(hz > 60);
+    for (int frame = 1; frame <= hz * 6 && !expired; ++frame) {
+        int ticks = frame * 60 / hz - (frame - 1) * 60 / hz;
+        U(step) = ticks;
+        F(elapsed) = 60.0f / hz;
+        guest_call(sub_000BC370);
+        failed |= U(step) != (unsigned)ticks || F(elapsed) != 60.0f / hz;
+        if (frame == hz)
+            age = F(message + 0x108);
+        if (!U(message))
+            expired = frame * 60 / hz;
+    }
+    printf("%3d FPS  HUD message age at one second %.5f, expired at tick %d\n", hz, age, expired);
+    failed |= fabsf(age - 0.75f) > 0.0001f || !expired ||
+              fabsf(expired - (lifetime + 0.25f) * 60.0f) > 2.0f;
+}
+
 int __wrap_main(int argc, char **argv)
 {
     if (argc != 2)
@@ -110,6 +150,7 @@ int __wrap_main(int argc, char **argv)
     int rates[] = {30, 60, 120, 144, 317, 719};
     for (unsigned i = 0; i < sizeof(rates) / sizeof(rates[0]); ++i) {
         int hz = rates[i];
+        check_hud_message(hz);
         fixture_free_step(hz > 60);
         memset(ram + pool, 0, 17 * 4);
         memset(ram + particle, 0, 0x68);
