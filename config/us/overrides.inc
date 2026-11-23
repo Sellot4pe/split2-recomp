@@ -43,21 +43,291 @@ void sub_000E6A00(void)
     sub_000E6A00_gen();
 }
 
-/* Experimental 16:9 aim diagnosis: US player aim/raycast update. This
- * function combines reticle X/Y with camera+0x320/0x31C to form a world ray.
- * RECOMP_TS2_AIM_WIDTH sets the scale when the game camera is widened. */
+/* US player aim/raycast update: compensate for the widened camera when
+ * converting reticle X/Y into a world ray. */
 extern void sub_00144890_gen(void);
-void sub_00144890(void) { ts2_aim_projection_probe(sub_00144890_gen); }
+void sub_00144890(void) { ts2_aim_projection(sub_00144890_gen); }
+
+
+/* Diagnostic: world-positioned effects projected into 640x480 by the game.
+ * Draw 0x000B80E0 includes six pretransformed vertex submissions per quad
+ * through 0x000A4380.  The pair scopes the experiment to this effect path,
+ * leaving HUD vertices, world vertices and the camera untouched. */
+extern void sub_000B80E0_gen(void);
+void sub_000B80E0(void) { ts2_fx_world_project_draw(sub_000B80E0_gen); }
+extern void sub_000A4380_gen(void);
+void sub_000A4380(void) { ts2_fx_world_project_vertex(sub_000A4380_gen); }
 
 /* front_end_scene is sub_0009F180 (PAL 0x0009F1C0): it builds its camera
  * through sub_00095CA0 (PAL 0x00095CE0), which calls build_projection. */
 extern void sub_0009F180_gen(void);
 void sub_0009F180(void) { ts2_front_end_scene(sub_0009F180_gen); }
 
+/* US frame timing (001ADF80) clamps the vblank delta to 1..3 and adds it
+ * to the running tick count. It tail-calls 00168BF0 to advance the calendar.
+ * Rewrite the step before that call consumes it so rollovers stay correct. */
+#define TS2_US_REAL_STEP  0x00348898u
+#define TS2_US_GAME_STEP  0x0034889Cu
+#define TS2_US_REAL_FLOAT 0x003488A0u
+#define TS2_US_GAME_FLOAT 0x003488A4u
+#define TS2_US_TICK_TOTAL 0x0040BC54u
+#define TS2_US_CLOCK_HELD 0x0040BC58u
+#define TS2_US_SEQUENCE   0x00356770u
+
+extern int64_t host_time_ns(void);
+extern const char *xbox_Nv2aFlipGateModeName(void);
+extern void xbox_Nv2aFlipGateHoldVblank(int on);
+
+static int ts2_us_cap_above_vblank(void)
+{
+    const char *cap = xbox_Nv2aFlipGateModeName();
+    return !strcmp(cap, "off") || atoi(cap) > 60;
+}
+
+static int ts2_us_free_step_enabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0)
+        enabled = recomp_config_bool("RECOMP_TS2_FREE_STEP", "ts2_free_step", 1);
+    return enabled;
+}
+
+static int g_ts2_us_gameplay_frame;
+static int g_ts2_us_free_step;
+static float g_ts2_us_frame_step;
+static float g_ts2_us_previous_frame_step;
+
+extern void sub_00168BF0_gen(void);
+void sub_00168BF0(void)
+{
+    static int64_t last;
+    static int64_t remainder;
+    static int reported;
+    int64_t now, elapsed;
+    uint32_t ticks;
+    float step;
+
+    g_ts2_us_free_step = 0;
+    if (!g_ts2_us_gameplay_frame || !ts2_us_cap_above_vblank() ||
+        !ts2_us_free_step_enabled() || TS2_MEM32(TS2_US_CLOCK_HELD) ||
+        TS2_MEM32(TS2_US_SEQUENCE)) {
+        last = remainder = 0;
+        g_ts2_us_frame_step = 0.0f;
+        sub_00168BF0_gen();
+        return;
+    }
+
+    now = host_time_ns();
+    elapsed = last ? now - last : 16666667;
+    last = now;
+    if (elapsed < 0)
+        elapsed = 0;
+    if (elapsed > 50000000)
+        elapsed = 50000000; /* native three-tick catch-up limit */
+    remainder += elapsed * 60;
+    ticks = (uint32_t)(remainder / 1000000000);
+    remainder %= 1000000000;
+    step = (float)((double)elapsed * 60.0 / 1000000000.0);
+    TS2_MEM32(TS2_US_TICK_TOTAL) += ticks - TS2_MEM32(TS2_US_REAL_STEP);
+    TS2_MEM32(TS2_US_REAL_STEP) = ticks;
+    TS2_MEM32(TS2_US_GAME_STEP) = ticks;
+    TS2_MEMF(TS2_US_REAL_FLOAT) = step;
+    TS2_MEMF(TS2_US_GAME_FLOAT) = step;
+    g_ts2_us_previous_frame_step = g_ts2_us_frame_step;
+    g_ts2_us_frame_step = step;
+    g_ts2_us_free_step = 1;
+    if (!reported) {
+        fprintf(stderr, "[TS2-STEP] experimental elapsed-time updates enabled\n");
+        reported = 1;
+    }
+    sub_00168BF0_gen();
+}
+
+/* The object scheduler (00153F90) restores the shared float step from an
+ * integer copy, so the later player update sees whole ticks. Give the
+ * movement and bob code its original fractional frame step and leave the
+ * scheduler's integer step available for events that consume whole ticks. */
+extern void sub_001463D0_gen(void);
+void sub_001463D0(void)
+{
+    if (g_ts2_us_free_step) {
+        uint32_t saved = TS2_MEM32(TS2_US_GAME_FLOAT);
+
+        TS2_MEMF(TS2_US_GAME_FLOAT) = g_ts2_us_frame_step;
+        sub_001463D0_gen();
+        TS2_MEM32(TS2_US_GAME_FLOAT) = saved;
+        return;
+    }
+    sub_001463D0_gen();
+}
+
+/* 000B72F0 advances the weapon bob after the player update. Its phase and
+ * amplitude both divide the last horizontal displacement (+0x1B8) by the
+ * last nonzero whole step (+0x190). Movement now uses fractional time,
+ * so feed the bob the equivalent displacement for that whole-step divisor. */
+extern void sub_000B72F0_gen(void);
+void sub_000B72F0(void)
+{
+    if (g_ts2_us_free_step && g_ts2_us_previous_frame_step > 0.0f) {
+        uint32_t player = TS2_MEM32(0x00497100u);
+        int32_t divisor = (int32_t)TS2_MEM32(player + 0x190u);
+
+        if (divisor > 0) {
+            uint32_t saved_step = TS2_MEM32(TS2_US_GAME_FLOAT);
+            uint32_t saved_distance = TS2_MEM32(player + 0x1B8u);
+
+            TS2_MEMF(TS2_US_GAME_FLOAT) = g_ts2_us_frame_step;
+            TS2_MEMF(player + 0x1B8u) *= (float)divisor / g_ts2_us_previous_frame_step;
+            sub_000B72F0_gen();
+            TS2_MEM32(player + 0x1B8u) = saved_distance;
+            TS2_MEM32(TS2_US_GAME_FLOAT) = saved_step;
+            return;
+        }
+    }
+    sub_000B72F0_gen();
+}
+
+/* Sample the player position and the bob outputs together so a stepped
+ * movement input can be distinguished from a discontinuity in the bob. */
+extern void sub_00140E10_gen(void);
+void sub_00140E10(void)
+{
+    static int trace = -1;
+
+    sub_00140E10_gen();
+    if (trace < 0)
+        trace = recomp_config_bool("RECOMP_TS2_BOB_TRACE", NULL, 0);
+    if (trace && g_ts2_us_gameplay_frame && !TS2_MEM32(TS2_US_SEQUENCE)) {
+        uint32_t player = TS2_MEM32(0x00497100u);
+
+        fprintf(stderr, "[TS2-BOB] %u %u %.5f %08x pos %.6f %.6f %.6f "
+                        "dist %.6f phase %.4f %.4f bob %.6f %.6f\n",
+                TS2_MEM32(0x0040BC5Cu), TS2_MEM32(TS2_US_GAME_STEP),
+                TS2_MEMF(TS2_US_GAME_FLOAT), player,
+                TS2_MEMF(player + 0xF0), TS2_MEMF(player + 0xF4), TS2_MEMF(player + 0xF8),
+                TS2_MEMF(player + 0x1B4), TS2_MEMF(player + 0x180), TS2_MEMF(player + 0x184),
+                TS2_MEMF(player + 0x188), TS2_MEMF(player + 0x18C));
+    }
+}
+
+/* 001B9E80 samples the pad and writes newly pressed buttons at +0x28.
+ * Keep face-button presses until a gameplay tick can consume them.
+ * The game's button mapping uses bits 0x10..0x80 for A/B/X/Y. */
+extern void sub_001B9E80_gen(void);
+void sub_001B9E80(void)
+{
+    static uint32_t pending[8];
+    uint32_t port = TS2_MEM32(g_esp + 4u);
+    uint32_t pad = TS2_MEM32(g_esp + 8u);
+    uint32_t pressed;
+    const uint32_t face_buttons = 0xF0u;
+
+    sub_001B9E80_gen();
+    if (port >= sizeof pending / sizeof pending[0])
+        return;
+    if (!g_ts2_us_free_step || TS2_MEM32(pad + 0x14u) != 0x63u) {
+        pending[port] = 0;
+        return;
+    }
+    pressed = TS2_MEM32(pad + 0x28u);
+    pending[port] |= pressed & face_buttons;
+    if (TS2_MEM32(TS2_US_GAME_STEP) == 0u) {
+        TS2_MEM32(pad + 0x28u) = pressed & ~face_buttons;
+    } else {
+        TS2_MEM32(pad + 0x28u) = pressed | pending[port];
+        pending[port] = 0;
+    }
+}
+
+/* Object type 0x1D6 is damfilecabinet.xbr. Its activation plays sound
+ * in 0019B960 and registers 001989C0 to animate the drawer. */
+static void ts2_us_cabinet_trace(const char *event, uint32_t object)
+{
+    static int trace = -1;
+
+    if (trace < 0)
+        trace = recomp_config_bool("RECOMP_TS2_CABINET_TRACE", NULL, 0);
+    if (trace && TS2_MEM32(object + 8u) == 0x1D6u)
+        fprintf(stderr, "[TS2-CABINET] %s %08x tick %u step %u/%.5f "
+                        "last %u motion %.5f speed %.5f callback %08x\n",
+                event, object, TS2_MEM32(0x004AD6A8u), TS2_MEM32(TS2_US_GAME_STEP),
+                TS2_MEMF(TS2_US_GAME_FLOAT), TS2_MEM32(object + 0x18u),
+                TS2_MEMF(object + 0x120u), TS2_MEMF(object + 0x1FCu),
+                TS2_MEM32(object + 0x134u));
+}
+
+extern void sub_0019B960_gen(void);
+void sub_0019B960(void)
+{
+    uint32_t object = TS2_MEM32(g_esp + 4u);
+
+    sub_0019B960_gen();
+    ts2_us_cabinet_trace("activate", object);
+}
+
+extern void sub_001989C0_gen(void);
+void sub_001989C0(void)
+{
+    uint32_t object = TS2_MEM32(g_esp + 4u);
+    int cabinet_between_ticks = g_ts2_us_free_step &&
+                                TS2_MEM32(TS2_US_GAME_STEP) == 0u &&
+                                TS2_MEM32(object + 8u) == 0x1D6u;
+
+    /* With zero ticks the native callback skips displacement, then sees
+     * a closed drawer and unregisters itself before the first real tick. */
+    if (cabinet_between_ticks && TS2_MEMF(object + 0x120u) == 0.0f) {
+        ts2_us_cabinet_trace("defer", object);
+        g_esp += 4u; /* cdecl return address */
+        return;
+    }
+    sub_001989C0_gen();
+    /* The native callback still builds the drawer matrix at zero ticks,
+     * but only flags it for the object's transform pass on tick frames. */
+    if (cabinet_between_ticks)
+        TS2_MEM32(object + 0x28u) |= 2u;
+    ts2_us_cabinet_trace("animate", object);
+}
+
+/* These callers divide by the integer game step. Zero is a valid step in
+ * the experiment, so give their legacy divisions the console's minimum.
+ * 000B3E10 and 000DB840 already check for a non-positive step. */
+static void ts2_us_step_division(void (*body)(void))
+{
+    if (g_ts2_us_free_step && TS2_MEM32(TS2_US_GAME_STEP) == 0u) {
+        TS2_MEM32(TS2_US_GAME_STEP) = 1u;
+        body();
+        TS2_MEM32(TS2_US_GAME_STEP) = 0u;
+        return;
+    }
+    body();
+}
+
+extern void sub_00025920_gen(void);
+void sub_00025920(void) { ts2_us_step_division(sub_00025920_gen); }
+extern void sub_001710D0_gen(void);
+void sub_001710D0(void) { ts2_us_step_division(sub_001710D0_gen); }
+extern void sub_0018C6C0_gen(void);
+void sub_0018C6C0(void) { ts2_us_step_division(sub_0018C6C0_gen); }
+extern void sub_0019EF80_gen(void);
+void sub_0019EF80(void) { ts2_us_step_division(sub_0019EF80_gen); }
+extern void sub_001A27F0_gen(void);
+void sub_001A27F0(void) { ts2_us_step_division(sub_001A27F0_gen); }
+
 /* present is sub_001CC100 (PAL 0x001CC530): the only function in the game's
  * code that calls D3DDevice_Swap. */
 extern void sub_001CC100_gen(void);
-void sub_001CC100(void) { ts2_present(sub_001CC100_gen); }
+void sub_001CC100(void)
+{
+    /* The menu has per-frame animation and input repeats outside the game
+     * clock. Use the existing front-end scene hook to keep it on vblank,
+     * including menus with a backdrop drawn through the gameplay camera. */
+    g_ts2_us_gameplay_frame = g_ts2_frame_camera && !g_ts2_frame_front_end;
+    xbox_Nv2aFlipGateHoldVblank(ts2_us_cap_above_vblank() &&
+                              (!g_ts2_us_gameplay_frame || !ts2_us_free_step_enabled() ||
+                               TS2_MEM32(TS2_US_SEQUENCE) || TS2_MEM32(TS2_US_CLOCK_HELD)));
+    ts2_present(sub_001CC100_gen);
+}
 
 /* reserve is sub_001C8E35 (PAL 0x001C9265): 52 callers, a switch on its
  * first argument (the primitive type), and it calls the flush. flush is
@@ -85,7 +355,56 @@ void sub_001C0F18(void) { ts2_ui_enter(); sub_001C0F18_gen(); ts2_ui_leave(); }
 extern void sub_001B5A70_gen(void);   /* PAL 0x001B5E80, -0x410 */
 void sub_001B5A70(void) { ts2_ui_enter(); sub_001B5A70_gen(); ts2_ui_leave(); }
 extern void sub_001B54D0_gen(void);   /* PAL 0x001B58E0, -0x410 */
-void sub_001B54D0(void) { ts2_ui_enter(); sub_001B54D0_gen(); ts2_ui_leave(); }
+
+/* The two scope renderers use this untextured gradient quad for the eight
+ * pieces between the lens and the player viewport. The lens uses the
+ * renderer's centred 2D transform. Apply that transform to the inner
+ * endpoints only, leaving the mask's outer endpoints on the viewport. */
+extern int d3d8_display_wide_now(void);
+extern unsigned d3d8_GetGuestWidth(void);
+extern unsigned d3d8_GetGuestHeight(void);
+extern void recomp_widescreen_aspect(unsigned *width, unsigned *height);
+
+static void ts2_scope_mask_quad(uint32_t site)
+{
+    uint32_t args = g_esp + 4u;
+    uint32_t viewport = TS2_MEM32(0x00483F28u);
+    float left = (float)(int32_t)TS2_MEM32(viewport);
+    float right = (float)(int32_t)TS2_MEM32(viewport + 4u);
+    unsigned aspect_w, aspect_h;
+    unsigned guest_w = d3d8_GetGuestWidth();
+    unsigned guest_h = d3d8_GetGuestHeight();
+    float centre = guest_w * 0.5f;
+    uint32_t saved_left = TS2_MEM32(args);
+    uint32_t saved_right = TS2_MEM32(args + 8u);
+
+    recomp_widescreen_aspect(&aspect_w, &aspect_h);
+    if (guest_w && guest_h && ts2_ui_place_for(site) == TS2_UI_STRETCH) {
+        float scale = ((float)guest_w * aspect_h) / ((float)guest_h * aspect_w);
+        float x = TS2_MEMF(args);
+        if (x != left && x != right)
+            TS2_MEMF(args) = centre + (x - centre) * scale;
+        x = TS2_MEMF(args + 8u);
+        if (x != left && x != right)
+            TS2_MEMF(args + 8u) = centre + (x - centre) * scale;
+    }
+    sub_001B54D0_gen();
+    TS2_MEM32(args) = saved_left;
+    TS2_MEM32(args + 8u) = saved_right;
+}
+
+void sub_001B54D0(void)
+{
+    uint32_t site = TS2_MEM32(g_esp);
+    ts2_ui_enter();
+    if (((site >= 0x000C2F37u && site <= 0x000C3050u) ||
+         (site >= 0x000C3AFAu && site <= 0x000C3C13u)) &&
+        g_ts2_depth == 1 && d3d8_display_wide_now())
+        ts2_scope_mask_quad(site);
+    else
+        sub_001B54D0_gen();
+    ts2_ui_leave();
+}
 extern void sub_001B6610_gen(void);   /* PAL 0x001B6A20, -0x410 */
 void sub_001B6610(void) { ts2_ui_enter(); sub_001B6610_gen(); ts2_ui_leave(); }
 extern void sub_001B75F0_gen(void);   /* PAL 0x001B7A00, -0x410 */
@@ -204,6 +523,36 @@ const Ts2UiPlace k_ts2_ui_places[] = {
     { 0x000BE5CF, TS2_UI_SIDE },
     { 0x000BC2AC, TS2_UI_CENTRE }, { 0x00058610, TS2_UI_CENTRE },
     { 0x000C92DF, TS2_UI_STRETCH },
+    /* Zoom optics: screen shade gradients with prepositioned lens edges,
+     * and the two viewport-sized tint passes. */
+    { 0x000C2F37, TS2_UI_STRETCH }, { 0x000C2F62, TS2_UI_STRETCH },
+    { 0x000C2F88, TS2_UI_STRETCH }, { 0x000C2FAF, TS2_UI_STRETCH },
+    { 0x000C2FD6, TS2_UI_STRETCH }, { 0x000C2FFD, TS2_UI_STRETCH },
+    { 0x000C3025, TS2_UI_STRETCH }, { 0x000C3050, TS2_UI_STRETCH },
+    { 0x000C3AFA, TS2_UI_STRETCH }, { 0x000C3B25, TS2_UI_STRETCH },
+    { 0x000C3B4B, TS2_UI_STRETCH }, { 0x000C3B72, TS2_UI_STRETCH },
+    { 0x000C3B99, TS2_UI_STRETCH }, { 0x000C3BC0, TS2_UI_STRETCH },
+    { 0x000C3BE8, TS2_UI_STRETCH }, { 0x000C3C13, TS2_UI_STRETCH },
+    { 0x000C31F3, TS2_UI_STRETCH }, { 0x000C3D32, TS2_UI_STRETCH },
+    /* Lens corners, centre markings and the alpha rectangle inside the lens. */
+    { 0x000C2F03, TS2_UI_CENTRE },
+    { 0x000C3096, TS2_UI_CENTRE }, { 0x000C30BF, TS2_UI_CENTRE },
+    { 0x000C30E8, TS2_UI_CENTRE }, { 0x000C312B, TS2_UI_CENTRE },
+    { 0x000C3147, TS2_UI_CENTRE }, { 0x000C3166, TS2_UI_CENTRE },
+    { 0x000C3182, TS2_UI_CENTRE },
+    { 0x000C32D1, TS2_UI_CENTRE }, { 0x000C32EA, TS2_UI_CENTRE },
+    { 0x000C3306, TS2_UI_CENTRE }, { 0x000C331F, TS2_UI_CENTRE },
+    { 0x000C34B2, TS2_UI_CENTRE }, { 0x000C34D2, TS2_UI_CENTRE },
+    { 0x000C34E7, TS2_UI_CENTRE }, { 0x000C3503, TS2_UI_CENTRE },
+    { 0x000C3520, TS2_UI_CENTRE }, { 0x000C353B, TS2_UI_CENTRE },
+    { 0x000C354E, TS2_UI_CENTRE }, { 0x000C360C, TS2_UI_CENTRE },
+    { 0x000C3C4F, TS2_UI_CENTRE }, { 0x000C3C78, TS2_UI_CENTRE },
+    { 0x000C3C9E, TS2_UI_CENTRE }, { 0x000C3CC4, TS2_UI_CENTRE },
+    { 0x000C3D66, TS2_UI_CENTRE }, { 0x000C3D77, TS2_UI_CENTRE },
+    { 0x000C3D8D, TS2_UI_CENTRE }, { 0x000C3D9F, TS2_UI_CENTRE },
+    { 0x000C3DF2, TS2_UI_CENTRE }, { 0x000C3E0A, TS2_UI_CENTRE },
+    { 0x000C3E1C, TS2_UI_CENTRE }, { 0x000C3E37, TS2_UI_CENTRE },
+    { 0x000C3E49, TS2_UI_CENTRE },
     /* Sprites the game places in the world and projects to the screen
      * itself (the brazier's flame, muzzle flashes): they were projected
      * through the widened camera, so they are already where the 3D is and

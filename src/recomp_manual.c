@@ -673,19 +673,19 @@ static RECOMP_MANUAL_TLS int      g_ts2_depth;
 
 #define TS2_MEM32(a) (*(volatile uint32_t *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
 
-/* Diagnostic only: determine whether the game's horizontal aiming ray is
- * using the 16:9 camera extent while its reticle is still laid out at 4:3.
- * The scale applies only with a widened game camera and RECOMP_TS2_AIM_WIDTH set.
- * Example: RECOMP_TS2_AIM_WIDTH=0.75 to try 4:3 / 16:9.
+/* The reticle retains its 4:3 layout when the gameplay camera widens.
+ * Undo the camera widening for the aiming ray. RECOMP_TS2_AIM_WIDTH
+ * can override the scale for testing.
  *
  * Camera pointer: US global 0x004B2F60; horizontal projection at camera+0x320.
  * The original value is restored before returning to the rest of the game.
  */
-static void ts2_aim_projection_probe(void (*aim_update)(void))
+static void ts2_aim_projection(void (*aim_update)(void))
 {
     static int initialized;
-    static float width_scale = 1.0f;
-    static int reported;
+    static float width_override;
+    float widen = ts2_camera_widen();
+    float width_scale;
     uint32_t camera;
     float original;
 
@@ -695,11 +695,12 @@ static void ts2_aim_projection_probe(void (*aim_update)(void))
             char *end;
             float n = strtof(s, &end);
             if (*end == '\0' && n >= 0.4f && n <= 1.5f)
-                width_scale = n;
+                width_override = n;
         }
         initialized = 1;
     }
-    if (width_scale == 1.0f || ts2_camera_widen() == 1.0f) {
+    width_scale = width_override ? width_override : 1.0f / widen;
+    if (widen == 1.0f || width_scale == 1.0f) {
         aim_update();
         return;
     }
@@ -710,11 +711,6 @@ static void ts2_aim_projection_probe(void (*aim_update)(void))
         return;
     }
     original = TS2_MEMF(camera + 0x320u);
-    if (!reported) {
-        fprintf(stderr, "[TS2-AIM] testing horizontal aim extent: %.3f -> %.3f (scale %.3f)\n",
-                original, original * width_scale, width_scale);
-        reported = 1;
-    }
     TS2_MEMF(camera + 0x320u) = original * width_scale;
     aim_update();
     TS2_MEMF(camera + 0x320u) = original;
@@ -895,6 +891,62 @@ static void ts2_ui_leave(void)
     if (g_ts2_ui_mode > 0 && g_ts2_depth > 0)
         g_ts2_depth--;
 }
+
+/* Diagnostic ONLY (US XBE): 0x000B80E0 draws world-positioned effects by
+ * projecting them into 640x480 screen coordinates and submitting pretransformed
+ * textured quads via 0x000A4380.  In 16:9, test whether its screen X was
+ * projected with a different horizontal extent than the rest of the world.
+ *
+ * RECOMP_TS2_FX_X=0.75 scales the X coordinate around screen centre 320.
+ * This affects only the vertices emitted inside 0x000B80E0.  It is deliberately
+ * not enabled by default and is not a proposed permanent solution.
+ */
+static RECOMP_MANUAL_TLS int g_ts2_fx_world_project;
+
+static float ts2_fx_project_x_scale(void)
+{
+    static int initialised;
+    static float scale = 1.0f;
+    if (!initialised) {
+        const char *s = getenv("RECOMP_TS2_FX_X");
+        if (s && *s) {
+            char *end = NULL;
+            float n = strtof(s, &end);
+            if (end && *end == '\0' && n >= 0.4f && n <= 1.5f)
+                scale = n;
+        }
+        initialised = 1;
+    }
+    return scale;
+}
+
+static void ts2_fx_world_project_draw(void (*draw)(void))
+{
+    g_ts2_fx_world_project++;
+    draw();
+    g_ts2_fx_world_project--;
+}
+
+static void ts2_fx_world_project_vertex(void (*vertex)(void))
+{
+    if (g_ts2_fx_world_project > 0) {
+        float scale = ts2_fx_project_x_scale();
+        if (scale != 1.0f) {
+            static int reported;
+            float x = TS2_MEMF(g_esp + 4u); /* 1st float arg of 0x000A4380 */
+            float corrected = 320.0f + (x - 320.0f) * scale;
+            if (!reported) {
+                fprintf(stderr,
+                        "[TS2-FX] world sprite X %.3f -> %.3f (scale %.3f)\n",
+                        x, corrected, scale);
+                reported = 1;
+            }
+            TS2_MEMF(g_esp + 4u) = corrected;
+        }
+    }
+    vertex();
+}
+
 
 /* ── TimeSplitters 2: extra playable characters, declared by mods ── */
 
