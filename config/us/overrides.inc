@@ -323,22 +323,29 @@ void sub_00025920(void)
     sub_00025920_gen();
 }
 
-/* The particle pool at 003602E0 only updates on whole simulation ticks.
- * Its age and velocity integrators both read the float delta. Give them
- * the time credited on this update, including catch-up ticks. */
-extern void sub_000B7E00_gen(void);
-void sub_000B7E00(void)
+/* Particle aging (000B7E00), tracer motion (00131DC0), and the missile
+ * callbacks dispatched by 00023330 use whole ticks to decide when to
+ * integrate. Supply the corresponding float for displacement, lifetime
+ * and swept collision. Restore the render-frame delta for the caller. */
+static void ts2_us_run_tick_update(void (*update)(void))
 {
     if (g_ts2_us_free_step) {
         uint32_t saved_step = TS2_MEM32(TS2_US_GAME_FLOAT);
 
         TS2_MEMF(TS2_US_GAME_FLOAT) = (float)(int32_t)TS2_MEM32(TS2_US_GAME_STEP);
-        sub_000B7E00_gen();
+        update();
         TS2_MEM32(TS2_US_GAME_FLOAT) = saved_step;
         return;
     }
-    sub_000B7E00_gen();
+    update();
 }
+
+extern void sub_000B7E00_gen(void);
+void sub_000B7E00(void) { ts2_us_run_tick_update(sub_000B7E00_gen); }
+extern void sub_00131DC0_gen(void);
+void sub_00131DC0(void) { ts2_us_run_tick_update(sub_00131DC0_gen); }
+extern void sub_00023330_gen(void);
+void sub_00023330(void) { ts2_us_run_tick_update(sub_00023330_gen); }
 
 /* present is sub_001CC100 (PAL 0x001CC530): the only function in the game's
  * code that calls D3DDevice_Swap. */
