@@ -307,30 +307,21 @@ void sub_001989C0(void)
     ts2_us_cabinet_trace("animate", object);
 }
 
-/* These callers divide by the integer game step. Zero is a valid step in
- * the experiment, so give their legacy divisions the console's minimum.
- * 000B3E10 and 000DB840 already check for a non-positive step. */
-static void ts2_us_step_division(void (*body)(void))
+/* The impact effect at 00025AE7 divides by the integer step without
+ * checking it. Keep its event (and return value) on a render-only frame.
+ * Other object and emitter callbacks guard their own divisions and depend
+ * on seeing zero between simulation ticks. */
+extern void sub_00025920_gen(void);
+void sub_00025920(void)
 {
     if (g_ts2_us_free_step && TS2_MEM32(TS2_US_GAME_STEP) == 0u) {
         TS2_MEM32(TS2_US_GAME_STEP) = 1u;
-        body();
+        sub_00025920_gen();
         TS2_MEM32(TS2_US_GAME_STEP) = 0u;
         return;
     }
-    body();
+    sub_00025920_gen();
 }
-
-extern void sub_00025920_gen(void);
-void sub_00025920(void) { ts2_us_step_division(sub_00025920_gen); }
-extern void sub_001710D0_gen(void);
-void sub_001710D0(void) { ts2_us_step_division(sub_001710D0_gen); }
-extern void sub_0018C6C0_gen(void);
-void sub_0018C6C0(void) { ts2_us_step_division(sub_0018C6C0_gen); }
-extern void sub_0019EF80_gen(void);
-void sub_0019EF80(void) { ts2_us_step_division(sub_0019EF80_gen); }
-extern void sub_001A27F0_gen(void);
-void sub_001A27F0(void) { ts2_us_step_division(sub_001A27F0_gen); }
 
 /* present is sub_001CC100 (PAL 0x001CC530): the only function in the game's
  * code that calls D3DDevice_Swap. */
