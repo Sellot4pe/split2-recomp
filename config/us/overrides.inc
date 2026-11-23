@@ -535,6 +535,8 @@ const Ts2UiPlace k_ts2_ui_places[] = {
     { 0x000BFFC3, TS2_UI_RIGHT },  { 0x000C0204, TS2_UI_RIGHT },
     { 0x000C02B4, TS2_UI_RIGHT },  { 0x000C03CF, TS2_UI_RIGHT },
     { 0x000BE5FC, TS2_UI_SIDE },   { 0x000BEDE7, TS2_UI_SIDE },
+    /* 000BEA90 emits a partially filled bullet row through this branch. */
+    { 0x000BEE89, TS2_UI_SIDE },
     /* The dark backing drawn under each ammo number, from its own call
      * site: left to the width guess it stayed in the 4:3 layout, beside
      * the bars, while the number went to the corner. */
