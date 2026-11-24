@@ -527,7 +527,11 @@ void sub_001B7450(void)
                           ((float)guest_h * aspect_w);
 
             if (scale > 0.0f && scale < 1.0f) {
-                int clear = (int)((float)guest_w * (1.0f - scale) * 0.5f);
+                /* The lens quadrants are inset 20 guest pixels from the 4:3
+                 * edge, and the centred viewport scales that inset by the
+                 * same factor as the rest of the squeezed picture. */
+                int clear = (int)((float)guest_w * (1.0f - scale) * 0.5f +
+                                  20.0f * scale);
                 int edge = site == 0x000C2B06u ? clear : (int)guest_w - clear;
 
                 TS2_MEM32(site == 0x000C2B06u ? g_esp + 12u : g_esp + 4u) =
