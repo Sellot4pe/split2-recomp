@@ -422,20 +422,16 @@ static void ts2_pin_scope_view(int pin)
 
 void sub_001C8E35(void)
 {
-    ts2_ui_reserve(sub_001C8E35_gen, sub_001C98AF);
-}
-extern void sub_001C98AF_gen(void);
-void sub_001C98AF(void)
-{
-    uint32_t site = ts2_ui_batch_site();
-    int pin = site == 0x0014C723u || site == 0x001B0A52u;
+    int pin = TS2_MEM32(g_esp) == 0x0014C723u;
 
     if (pin)
         ts2_pin_scope_view(1);
-    ts2_ui_batch_flush(sub_001C98AF_gen);
+    ts2_ui_reserve(sub_001C8E35_gen, sub_001C98AF);
     if (pin)
         ts2_pin_scope_view(0);
 }
+extern void sub_001C98AF_gen(void);
+void sub_001C98AF(void) { ts2_ui_batch_flush(sub_001C98AF_gen); }
 
 /* The engine's shared drawing functions, whose callers are the sites. Each is
  * the PAL one at the shift of its stretch of code: a function start there
@@ -505,7 +501,14 @@ void sub_001B54D0(void)
 extern void sub_001B6610_gen(void);   /* PAL 0x001B6A20, -0x410 */
 void sub_001B6610(void) { ts2_ui_enter(); sub_001B6610_gen(); ts2_ui_leave(); }
 extern void sub_001B75F0_gen(void);   /* PAL 0x001B7A00, -0x410 */
-void sub_001B75F0(void) { ts2_ui_enter(); sub_001B75F0_gen(); ts2_ui_leave(); }
+void sub_001B75F0(void)
+{
+    ts2_pin_scope_view(1);
+    ts2_ui_enter();
+    sub_001B75F0_gen();
+    ts2_ui_leave();
+    ts2_pin_scope_view(0);
+}
 extern void sub_001B52C0_gen(void);   /* PAL 0x001B56D0, -0x410 */
 void sub_001B52C0(void) { ts2_ui_enter(); sub_001B52C0_gen(); ts2_ui_leave(); }
 extern void sub_00058300_gen(void);   /* PAL 0x00058360, -0x60 */

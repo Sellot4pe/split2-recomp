@@ -873,14 +873,6 @@ static void ts2_ui_batch_flush(void (*flush)(void))
         ts2_ui_host_place(TS2_UI_AUTO, 0);
 }
 
-/* Which call site the current 2D batch belongs to, for a release's
- * overrides.inc to pin per-site state (the sniper scope's readout) around
- * the actual draw. */
-uint32_t ts2_ui_batch_site(void)
-{
-    return g_ts2_batch_site;
-}
-
 /* The engine's shared drawing functions: the helpers that reserve vertices
  * for many callers (quads, sprites, text), and the ones above them that the
  * menu and HUD code call. Whoever called the outermost of them is the site.
