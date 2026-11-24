@@ -507,42 +507,7 @@ static void ts2_us_draw_postprocess_quad(void (*draw)(void))
 extern void sub_001B75A0_gen(void);   /* PAL 0x001B79B0, -0x410 */
 void sub_001B75A0(void) { ts2_us_draw_postprocess_quad(sub_001B75A0_gen); }
 extern void sub_001B7450_gen(void);   /* PAL 0x001B7860, -0x410 */
-void sub_001B7450(void)
-{
-    uint32_t site = TS2_MEM32(g_esp);
-
-    /* The vintage scope's left and right edge strips only reach the 4:3
-     * picture. In widescreen the lens stays centred, so the area between
-     * each strip and the centred lens is left clear. Widen the two side
-     * strips to meet the centred picture. */
-    if (d3d8_display_wide_now() &&
-        (site == 0x000C2B06u || site == 0x000C2B3Bu)) {
-        unsigned guest_w = d3d8_GetGuestWidth();
-        unsigned guest_h = d3d8_GetGuestHeight();
-        unsigned aspect_w, aspect_h;
-
-        recomp_widescreen_aspect(&aspect_w, &aspect_h);
-        if (guest_w && guest_h && aspect_w && aspect_h) {
-            float scale = ((float)guest_w * aspect_h) /
-                          ((float)guest_h * aspect_w);
-
-            if (scale > 0.0f && scale < 1.0f) {
-                /* The lens quadrants are inset 20 guest pixels from the 4:3
-                 * edge, and the centred viewport scales that inset by the
-                 * same factor as the rest of the squeezed picture. */
-                int clear = (int)((float)guest_w * (1.0f - scale) * 0.5f +
-                                  20.0f * scale);
-                int edge = site == 0x000C2B06u ? clear : (int)guest_w - clear;
-
-                TS2_MEM32(site == 0x000C2B06u ? g_esp + 12u : g_esp + 4u) =
-                    (uint32_t)edge;
-            }
-        }
-    }
-    ts2_ui_enter();
-    sub_001B7450_gen();
-    ts2_ui_leave();
-}
+void sub_001B7450(void) { ts2_ui_enter(); sub_001B7450_gen(); ts2_ui_leave(); }
 extern void sub_001B7540_gen(void);   /* PAL 0x001B7950, -0x410 */
 void sub_001B7540(void) { ts2_ui_enter(); sub_001B7540_gen(); ts2_ui_leave(); }
 extern void sub_000AA5B0_gen(void);   /* PAL 0x000AA5F0, -0x40 */
