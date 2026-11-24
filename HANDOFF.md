@@ -49,3 +49,25 @@ rather than sharing the view matrix. This is a lift-aware change: patch the
 lifted text path and teach the lifter to preserve it, or add a per-draw
 transform override with a reliable way to identify only the readout's 2D
 batch. Do this in a scoped session with in-game checks after each step.
+
+## Also remaining: low-resolution screen-copy effects
+
+Two cosmetic blur/resolution issues share one renderer root cause and are
+best fixed together:
+
+- The **uplink** copies the top-left 128x128 of the scene into a 128x128
+  shadow render target (see `hle_d3d8_render_texture` in
+  `xboxrecomp/src/hle/hle_d3d8_texture.c` and `d3d8_screencopy.c`), so the
+  map is only 128x128 even at 4x/6x render scale.
+- The **sniper scope** blends 640x480 screen copies back over the
+  supersampled scene in its shade (`0xCA58E`) and tint (`0xC31F3`) passes,
+  which is the same softening that made cutscenes blurry (fixed for
+  cutscenes by skipping `0xCA099`, but the scope's shade/tint are not
+  skippable).
+
+Both need **offscreen render-target scaling**: create shadow render targets
+at guest size * render scale and scale the viewport/scissor/screencopy
+accordingly. This is the deliberately deferred feature described in
+`d3d8_device.c` (`rt_scale_x` currently returns 1 for offscreen targets).
+It is a toolkit-wide change and should be done carefully in the submodule
+with tests across the other recomp titles.
