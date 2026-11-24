@@ -24,6 +24,9 @@ ART = {
     "l_103.pak": {"ts2newlogo", "ts2loading"},
     "l_105.pak": MENU_ART,
 }
+# The front end draws its text from these glyph sheets.  Every archive that
+# carries one gets the 2x replacement; the same bytes recur across the paks.
+FONTS = {"impact.xbt", "book.xbt", "booklight.xbt"}
 
 
 def xbr(rgb):
@@ -70,8 +73,8 @@ def build(data, output):
     with tempfile.TemporaryDirectory(dir=output.parent) as temp:
         mod = Path(temp) / "mod"
         mod.mkdir()
-        # Each level loads its own copy of the Impact glyph sheet. US loads
-        # whole archives. Decode repeated copies once, keyed by source bytes.
+        # Each level loads its own copy of a glyph sheet.  US loads whole
+        # archives.  Decode repeated copies once, keyed by source bytes.
         required = {data / "arcade" / archive for archive in ART}
         font_cache = {}
         for path in sorted(set(data.rglob("*.pak")) | required):
@@ -80,22 +83,21 @@ def build(data, output):
             raw = path.read_bytes()
             _, entries, layout = read_pak(raw)
             wanted = {f"textures/misc/{name}.xbt" for name in selected}
-            font = "textures/misc/impact.xbt"
-            if any(e["name"] == font for e in entries):
-                wanted.add(font)
+            wanted.update(f"textures/misc/{font}" for font in FONTS
+                          if any(e["name"] == f"textures/misc/{font}" for e in entries))
+            # Mission cards, the loading-screen backdrops, and the larger
+            # pictures behind the story briefing live in several archives.
+            wanted.update(e["name"] for e in entries
+                          if e["name"].startswith("textures/misc/lvim_")
+                          and e["name"].endswith(".xbt"))
             if not wanted:
                 continue
-            if archive == "l_105.pak":
-                # Mission cards and the larger pictures behind the story briefing.
-                wanted.update(e["name"] for e in entries
-                              if e["name"].startswith("textures/misc/lvim_")
-                              and e["name"].endswith(".xbt"))
             names, blobs = [], []
             for entry in entries:
                 name, offset = entry["name"], entry["position"]
                 blob = raw[offset:offset + entry["length"]]
                 if name in wanted:
-                    if name == font:
+                    if name in {f"textures/misc/{font}" for font in FONTS}:
                         if blob not in font_cache:
                             font_cache[blob] = upscale(blob)
                         blob = font_cache[blob]
