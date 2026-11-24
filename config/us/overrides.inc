@@ -357,13 +357,33 @@ void sub_000BC370(void) { ts2_us_run_tick_update(sub_000BC370_gen); }
 extern void sub_001CC100_gen(void);
 void sub_001CC100(void)
 {
+    static int g_ts2_us_last_hold = -1;
+    static uint32_t g_ts2_us_last_seq = ~0u;
+    uint32_t sequence = TS2_MEM32(TS2_US_SEQUENCE);
+    int hold;
+
     /* The menu has per-frame animation and input repeats outside the game
      * clock. Use the existing front-end scene hook to keep it on vblank,
      * including menus with a backdrop drawn through the gameplay camera. */
     g_ts2_us_gameplay_frame = g_ts2_frame_camera && !g_ts2_frame_front_end;
-    xbox_Nv2aFlipGateHoldVblank(ts2_us_cap_above_vblank() &&
-                              (!g_ts2_us_gameplay_frame || !ts2_us_free_step_enabled() ||
-                               TS2_MEM32(TS2_US_SEQUENCE) || TS2_MEM32(TS2_US_CLOCK_HELD)));
+    hold = ts2_us_cap_above_vblank() &&
+           (!g_ts2_us_gameplay_frame || !ts2_us_free_step_enabled() ||
+            sequence || TS2_MEM32(TS2_US_CLOCK_HELD));
+    if (sequence != g_ts2_us_last_seq) {
+        fprintf(stderr, "[TS2-SEQ] sequence %u -> %u (gameplay %d, front end %d, "
+                        "cap %s)\n",
+                g_ts2_us_last_seq, sequence, g_ts2_us_gameplay_frame,
+                g_ts2_frame_front_end, xbox_Nv2aFlipGateModeName());
+        g_ts2_us_last_seq = sequence;
+    }
+    if (hold != g_ts2_us_last_hold) {
+        fprintf(stderr, "[TS2-FLIP] hold vblank %d -> %d (sequence %u, "
+                        "gameplay %d, cap %s)\n",
+                g_ts2_us_last_hold, hold, sequence, g_ts2_us_gameplay_frame,
+                xbox_Nv2aFlipGateModeName());
+        g_ts2_us_last_hold = hold;
+    }
+    xbox_Nv2aFlipGateHoldVblank(hold);
     ts2_present(sub_001CC100_gen);
 }
 
