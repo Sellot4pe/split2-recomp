@@ -77,6 +77,9 @@ void sub_0009F180(void) { ts2_front_end_scene(sub_0009F180_gen); }
 extern int64_t host_time_ns(void);
 extern const char *xbox_Nv2aFlipGateModeName(void);
 extern void xbox_Nv2aFlipGateHoldVblank(int on);
+extern const float *xbox_D3D8VertexShaderConstants(void);
+extern void xbox_D3D8SetVertexShaderConstant(int reg, const float *data,
+                                             unsigned count);
 
 static int ts2_us_cap_above_vblank(void)
 {
@@ -394,7 +397,39 @@ void sub_001CC100(void)
  * sub_001C924C (PAL 0x001C967C) is the other way that calls the draw. */
 extern void sub_001C98AF(void);
 extern void sub_001C8E35_gen(void);
-void sub_001C8E35(void) { ts2_ui_reserve(sub_001C8E35_gen, sub_001C98AF); }
+/* The sniper scope's ammo glyphs and number go through the 3D camera, so
+ * their readout sways with the scope. Pin the view matrix (c64..c67) to
+ * the value from the first readout draw while those sites draw, then put
+ * the live matrix back for the 3D scene. */
+static void ts2_pin_scope_view(int pin)
+{
+    static int captured;
+    static float centred[16];
+    static float saved[16];
+
+    if (!pin) {
+        if (captured)
+            xbox_D3D8SetVertexShaderConstant(64, saved, 4);
+        return;
+    }
+    memcpy(saved, xbox_D3D8VertexShaderConstants() + 64 * 4, sizeof saved);
+    if (!captured) {
+        memcpy(centred, saved, sizeof centred);
+        captured = 1;
+    }
+    xbox_D3D8SetVertexShaderConstant(64, centred, 4);
+}
+
+void sub_001C8E35(void)
+{
+    int pin = TS2_MEM32(g_esp) == 0x0014C723u;
+
+    if (pin)
+        ts2_pin_scope_view(1);
+    ts2_ui_reserve(sub_001C8E35_gen, sub_001C98AF);
+    if (pin)
+        ts2_pin_scope_view(0);
+}
 extern void sub_001C98AF_gen(void);
 void sub_001C98AF(void) { ts2_ui_batch_flush(sub_001C98AF_gen); }
 
@@ -466,7 +501,14 @@ void sub_001B54D0(void)
 extern void sub_001B6610_gen(void);   /* PAL 0x001B6A20, -0x410 */
 void sub_001B6610(void) { ts2_ui_enter(); sub_001B6610_gen(); ts2_ui_leave(); }
 extern void sub_001B75F0_gen(void);   /* PAL 0x001B7A00, -0x410 */
-void sub_001B75F0(void) { ts2_ui_enter(); sub_001B75F0_gen(); ts2_ui_leave(); }
+void sub_001B75F0(void)
+{
+    ts2_pin_scope_view(1);
+    ts2_ui_enter();
+    sub_001B75F0_gen();
+    ts2_ui_leave();
+    ts2_pin_scope_view(0);
+}
 extern void sub_001B52C0_gen(void);   /* PAL 0x001B56D0, -0x410 */
 void sub_001B52C0(void) { ts2_ui_enter(); sub_001B52C0_gen(); ts2_ui_leave(); }
 extern void sub_00058300_gen(void);   /* PAL 0x00058360, -0x60 */
