@@ -208,6 +208,32 @@ void sub_000B72F0(void)
     sub_000B72F0_gen();
 }
 
+/* 000B3E10 advances the held weapon toward its firing pose. The action
+ * record's +0x50 pulse is rebuilt only on whole-tick frames, while +0x4C
+ * remains set for as long as the trigger is held. At above-60 FPS that
+ * makes the pulse absent from most rendered frames; the minigun spin-up
+ * then follows its decay path instead of accumulating elapsed time. Keep
+ * the pulse visible to this one animation update while the trigger remains
+ * held, without changing the action state seen by any other subsystem. */
+extern void sub_000B3E10_gen(void);
+void sub_000B3E10(void)
+{
+    uint32_t held = TS2_MEM32(g_esp + 4u);
+    uint32_t action = g_esi;
+
+    if (g_ts2_us_free_step && TS2_MEM32(TS2_US_GAME_STEP) == 0u &&
+        held && TS2_MEM32(held + 0x30u) == 5u &&
+        action && TS2_MEM32(action + 0x4Cu) != 0u) {
+        uint32_t saved = TS2_MEM32(action + 0x50u);
+
+        TS2_MEM32(action + 0x50u) = 1u;
+        sub_000B3E10_gen();
+        TS2_MEM32(action + 0x50u) = saved;
+        return;
+    }
+    sub_000B3E10_gen();
+}
+
 /* Sample the player position and the bob outputs together so a stepped
  * movement input can be distinguished from a discontinuity in the bob. */
 extern void sub_00140E10_gen(void);
