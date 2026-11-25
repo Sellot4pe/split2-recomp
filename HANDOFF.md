@@ -30,16 +30,16 @@ F11 captures land in `build/Release/frame*.d3dcap`. Replay with
 - Cutscene/vblank pacing trace (`85ed1ff`)
 - Vintage scope fully fixed in widescreen (`e9ff711`..`2996cfb`)
 - Sniper scope shade (`5388827`) and text/icon placement (`cf4497a`, `34a3184`)
-- Sniper scope cartridge row stays beside the count while aiming
-  (toolkit `c9fd93a`)
+- Sniper scope cartridge row and ammo count stay together while aiming
+  (toolkit `c9fd93a`, scope grouping in this commit)
 
 ## Fixed: sniper scope cartridge row sway
 
 The visible drift is the 128x32 cartridge strip, drawn as a screen-space
-quad through the shared ammo-HUD site `0x000BEDE7`. The numeric count is a
-separate draw (`0x000C37BA`) and was already centred. The earlier
-`0x14C723`/`0x1B0A52` diagnosis was misleading because batching carried
-those tags across unrelated geometry.
+quad through the shared ammo-HUD site `0x000BEDE7`. The numeric count uses
+the neighbouring shared HUD site `0x000BE5FC`, not the scope-specific
+`0x000C37BA` draw. The earlier `0x14C723`/`0x1B0A52` diagnosis was
+misleading because batching carried those tags across unrelated geometry.
 
 `SIDE` placement chose the right edge for the normal hip-fire row, but chose
 the left edge for the scope row while its midpoint was between 25% and 33%
@@ -50,10 +50,18 @@ in the centre from 25% up to the existing right-side boundary
 threshold is unchanged because the hip-fire row can sit just inside the
 right third.
 
+The cartridge strip and count can still cross that right-side boundary at
+different aim positions. When the scope renderer at `0x001C7EFF` or its
+shade at `0x000CA58E` has drawn in the current frame, both shared HUD sites
+are explicitly kept in the centred layout. Outside the scope they remain
+`SIDE`, so the ordinary hip-fire HUD is unchanged.
+
 Verified by replaying the saved scope capture: the row moved from x=117..149
 to x=197..229, leaving a 16-pixel gap before the count. The hip-fire capture
 was pixel-identical. Two live F11 captures with the patched build showed the
-row aligned with the count at both scope positions. All 31 toolkit tests pass.
+row aligned with the count at both scope positions. After adding the
+scope-only grouping rule, three more live F11 captures at different aims
+kept the strip and count together. All 31 toolkit tests pass.
 
 The earlier attempts to pin `c64` around the reserve (`1d6e91c`) and flush
 (`d424e00`) targeted the wrong layer and were correctly reverted.
