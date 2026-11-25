@@ -1,4 +1,4 @@
-# TimeSplitters 2 — sniper scope edge-fix handoff
+# TimeSplitters 2 — comprehensive US engine audit handoff
 
 ## Status
 
@@ -8,6 +8,12 @@ The modern sniper scope edge issue is fixed in commit:
 2e30a55 Align the sniper scope before widescreen clipping
 ```
 
+The uncapped minigun spin-up issue is fixed in the latest commit:
+
+```text
+f176093 Restore minigun spin-up in uncapped gameplay
+```
+
 The fix preserves the game's original eight-piece scope mask, four textured
 corners, alpha rectangle, reticle and readout. It does **not** replace the mask
 with procedural or tessellated geometry.
@@ -15,11 +21,20 @@ with procedural or tessellated geometry.
 The implementation was independently inspected against the generated guest
 code, rebuilt, and checked against tagged 4:3/16:9 captures and synthetic
 native-mask replays. The user also visually confirmed the final right-edge and
-bullet-impact frames.
+bullet-impact frames. The uncapped minigun reaches its full spin rate in
+0.901 seconds, within 0.001 seconds of the 60 FPS reference.
 
-No unresolved fundamental rendering problem is known. The remaining work is
-routine direct regression capture in 4:3, the vintage rifle and ordinary
-hip-fire, followed by PR preparation.
+No unresolved fundamental rendering problem is known. Three separate uncapped
+follow-ups remain:
+
+- minigun overheat occurs after about 64 rounds at uncapped rates versus about
+  100 rounds at 60 FPS;
+- player knockback appears much stronger while uncapped;
+- the sci-fi pistol weapon bob appears jerky while uncapped.
+
+Those are documented below and should not be conflated with the completed
+scope or minigun spin fixes. Direct 4:3, vintage-rifle and hip-fire regression
+captures remain routine PR work.
 
 ## Current repository state
 
@@ -34,6 +49,7 @@ Branch and commits:
 ```text
 fix/comprehensive-engine-audit
 Handoff commit: this documentation commit (`git log -1`)
+f176093  Restore minigun spin-up in uncapped gameplay
 2e30a55  Align the sniper scope before widescreen clipping
 e26b0fb  Document the remaining sniper scope mask investigation
 903bde1  Keep the sniper ammo outline with its count
@@ -79,7 +95,143 @@ The current Release executable is:
 
 ```text
 build/Release/split2_recomp
-sha256 a77d7725411e8831985a091113ced038df5ca7b08417a3d48add45f45a065047
+sha256 3e41a53fc9325057c61625627a45eec213e0e35b38c433a53031c1fdbcb38b91
+```
+
+The branch is 49 commits ahead of upstream `main` at `7a3345f`. Open upstream
+PRs #52 through #55 cover smaller subsets of the same audit. The comprehensive
+branch should be opened as a **draft** until its known uncapped follow-ups are
+resolved and the maintainer decides whether to prefer the combined branch or
+the smaller PRs.
+
+## Latest uncapped minigun work
+
+### Symptom and reproduction
+
+At frame caps above 60 FPS, the minigun barrels accelerated far more slowly
+than at 60 FPS. A full spin that should complete in about 0.9 seconds took
+several seconds at uncapped rates. The same save/scene and burst at 60 FPS was
+the reference.
+
+Reproduction:
+
+```bash
+cd /tmp/split2-engine-audit/build/Release
+
+RECOMP_USER_DIR=/tmp/split2-minigun-debug/profile \
+RECOMP_GAME_DIR=/tmp/split2-scope-live.xdrDlk/game \
+RECOMP_MUTE=1 RECOMP_FPS_CAP=0 RECOMP_RES_SCALE=1 \
+RECOMP_WIDESCREEN=1 RECOMP_ASPECT_RATIO=16:9 \
+./split2_recomp
+```
+
+Load the isolated minigun scene, hold primary fire for about three seconds,
+then repeat with the cap at 60 FPS.
+
+### Root cause
+
+The held-weapon animation update is US `0x000B3E10`. It consumes two action
+fields:
+
+```text
+action + 0x4C  persistent trigger-held state
+action + 0x50  firing pulse
+```
+
+The firing pulse is rebuilt only on whole simulation ticks. At 60 FPS one
+whole tick occurs each rendered frame, so spin-up advances normally. Above
+60 FPS most rendered frames have `game_step == 0`; the pulse is absent, and
+the type-5 minigun path runs its decay branch instead of accelerating.
+
+Relevant state:
+
+```text
+player                  0x00497100
+primary action record   player + 0x528
+held weapon block       actor + 0x408
+minigun animation type  held + 0x30 == 5
+spin phase              action + 0x70
+spin rate               action + 0x74
+spin-rate limit         24.0 for this action/type
+```
+
+The selected `action` pointer is the guest `ESI` value at entry to
+`sub_000B3E10`.
+
+### Implementation
+
+[`config/us/overrides.inc`](config/us/overrides.inc) wraps
+`sub_000B3E10_gen`.
+
+On a fractional frame with:
+
+- `g_ts2_us_free_step` active;
+- held animation type `5`;
+- persistent trigger state `action+0x4C != 0`;
+
+the wrapper temporarily supplies `action+0x50 = 1` for this one animation
+update and restores the saved pulse afterwards. The action pointer is copied
+locally before the call because the generated function may change guest `ESI`.
+
+The guest action state seen by other subsystems is unchanged. This fix covers
+both spin and the heat update that shares the firing-pose branch.
+
+### Verification
+
+The telemetry compared the action-0x74 spin-rate ramp directly:
+
+```text
+60 FPS reference:  reaches 24.0 at 0.900 s
+uncapped fixed:    reaches 24.0 at 0.901 s
+```
+
+The user visually confirmed the uncapped burst. A subsequent three-second
+capture completed without corruption. Normal adaptive play and the 31-test
+suite remained clean.
+
+### Remaining overheat issue
+
+The shared firing branch also updates heat. With the committed fix, the user
+observed approximately:
+
+```text
+60 FPS:    100 rounds before overheat
+uncapped:  64 rounds before overheat
+```
+
+Removing the fractional-frame pulse made the gun take more than 200 rounds and
+effectively never overheat before ammunition ran out. A hybrid that preserved
+`held+0xCC` between ticks and ran firing updates with a whole-tick float also
+failed to overheat correctly. Those experiments were reverted completely.
+
+Do not restore any of the experimental hybrid code. The next investigation
+should identify the exact heat accumulator and complete state-machine
+consequences before changing this wrapper.
+
+Evidence and exact experiment logs:
+
+```text
+build/engine-audit/minigun-investigation/OBSERVATIONS.md
+build/engine-audit/minigun-investigation/overheat-pulse-every-frame.log
+build/engine-audit/minigun-investigation/overheat-no-pulse-fractional-frames.log
+build/engine-audit/minigun-investigation/overheat-committed-spin-fix.log
+build/engine-audit/minigun-investigation/overheat-hybrid-experiment.log
+```
+
+### Deferred uncapped observations
+
+The following were intentionally left unchanged:
+
+- Excessive-looking player knockback after taking damage. The uncapped trace
+  contains movement spikes up to roughly 97 units/second, but it was not
+  established whether the hit itself was vanilla-strength.
+- Jerky weapon bob with the sci-fi pistol.
+
+Pinned trace and notes:
+
+```text
+build/engine-audit/minigun-investigation/inertia-and-sci-fi-pistol-bob-uncapped.log
+build/engine-audit/minigun-investigation/OBSERVATIONS.md
 ```
 
 ## Symptom and expected behaviour
@@ -741,8 +893,10 @@ The Release build completed without warnings. Final reruns:
 ```text
 31/31 toolkit tests passed
 timing test passed at 30, 60, 120, 144, 317 and 719 FPS
+uncapped minigun spin reaches 24.0 at 0.901 s vs 0.900 s at 60 FPS
+committed uncapped overheat: about 64 rounds vs 100 at 60 FPS (known issue)
 python -m py_compile passed for the capture probe and scope regression tool
-git diff --check passed before the gameplay commit
+git diff --check passed
 ```
 
 Logs:
@@ -835,6 +989,22 @@ python3 tools/regression/test_us_timing.py \
   > build/engine-audit/scope-border-validation/timing-final.log
 ```
 
+Run the uncapped minigun check from an isolated save:
+
+```bash
+cd /tmp/split2-engine-audit/build/Release
+
+RECOMP_USER_DIR=/tmp/split2-minigun-debug/profile \
+RECOMP_GAME_DIR=/tmp/split2-scope-live.xdrDlk/game \
+RECOMP_MUTE=1 RECOMP_FPS_CAP=0 RECOMP_RES_SCALE=1 \
+RECOMP_WIDESCREEN=1 RECOMP_ASPECT_RATIO=16:9 \
+./split2_recomp
+```
+
+Hold primary fire on the minigun from rest. Confirm the barrels reach full
+speed in about 0.9 seconds. Repeat at 60 FPS. The known overheat discrepancy
+is a separate unresolved task; do not treat it as a spin-up failure.
+
 Inspect exact reticle/corner/mask geometry:
 
 ```bash
@@ -917,8 +1087,52 @@ build/engine-audit/scope-border-handoff/hip-tagged.d3dcap
 build/engine-audit/scope-border-handoff/hip-tagged.bmp
 ```
 
+Minigun and deferred uncapped-motion evidence:
+
+```text
+build/engine-audit/minigun-investigation/OBSERVATIONS.md
+build/engine-audit/minigun-investigation/inertia-and-sci-fi-pistol-bob-uncapped.log
+build/engine-audit/minigun-investigation/overheat-pulse-every-frame.log
+build/engine-audit/minigun-investigation/overheat-no-pulse-fractional-frames.log
+build/engine-audit/minigun-investigation/overheat-committed-spin-fix.log
+build/engine-audit/minigun-investigation/overheat-hybrid-experiment.log
+build/engine-audit/minigun-investigation/frames000-023-contact.jpg
+build/engine-audit/minigun-investigation/user-minigun-frames.jpg
+```
+
 All captures contain game data and are intentionally under ignored `build/`.
 Do not add them to Git.
+
+## Remaining advanced work for Astra
+
+These tasks need judgement or further reverse engineering. They are not
+required to validate the completed scope fix.
+
+1. **Uncapped minigun overheat timing**
+
+   Current committed behaviour is about 64 rounds to overheat at uncapped
+   rates versus 100 rounds at 60 FPS. The shared `0x000B3E10` firing-pulse
+   wrapper fixes spin but affects heat as well. Do not simply remove the pulse:
+   the tested no-pulse and hybrid variants either nearly prevented overheat or
+   broke firing-pose progression.
+
+   Identify the exact heat value and state transitions first. The
+   `overheat-*.log` files record action state, shot counter, `held+0xC8`,
+   `held+0xCC`, `held+0xD0`, action fields `+0x68/+0x70/+0x74/+0x78/+0xD4`,
+   and `game_step`.
+
+2. **Uncapped knockback**
+
+   The uncapped trace contains repeated 60-97 units/second movement spikes,
+   while ordinary movement is much lower and fixed pacing has not yet been
+   captured for a comparable hit. Determine whether the hit impulse, collision
+   resolution, or velocity damping is frame-coupled.
+
+3. **Sci-fi pistol bob jitter**
+
+   The same uncapped trace shows visibly jerky weapon bob. The `[TS2-BOB]`
+   records include position, distance, phase and both bob outputs. This is
+   likely a distinct weapon-animation timing issue, not the minigun pulse.
 
 ## Remaining regression checklist for DeepSeek Flash
 
@@ -937,7 +1151,10 @@ fails.
    remains at the rendered reticle after recoil settles.
 6. Check render scales 2× and 3×. The synthetic 3× right-edge mask replay is
    already pixel-identical; this step checks the complete live frame.
-7. Re-read `git diff --check`, run the tests once more, and prepare the PR.
+7. Check the minigun at 60 FPS and uncapped: spin-up must remain about
+   0.9 seconds. Record overheat as a known follow-up rather than a regression
+   of the spin fix.
+8. Re-read `git diff --check`, run the tests once more, and prepare the PR.
 
 Useful manual launch command:
 
@@ -950,6 +1167,41 @@ RECOMP_MUTE=1 RECOMP_FPS_CAP=60 RECOMP_RES_SCALE=1 \
 RECOMP_WIDESCREEN=0 RECOMP_ASPECT_RATIO=4:3 \
 RECOMP_TS2_UI_SITES=1 ./split2_recomp
 ```
+
+## PR status and preparation
+
+Upstream is `phobos665/split2-recomp`, whose current `main` is `7a3345f`.
+Open PRs #52 through #55 cover smaller subsets of this audit:
+
+```text
+#52  widescreen aiming, decals and initial scope alignment
+#53  US story NPC, canyon door and checkpoint callbacks
+#54  ammo rows and candle heat haze
+#55  supersampling clarity
+```
+
+The comprehensive branch is a 49-commit superset and includes additional US
+menu, timing, scope-edge and minigun work. A combined PR is useful for review
+visibility, but should be opened as a draft because the minigun overheat
+follow-up remains unresolved and the maintainer may prefer the smaller PRs.
+
+Push and open the Draft PR from the repository root:
+
+```bash
+git push -u fork fix/comprehensive-engine-audit
+
+gh pr create \
+  --repo phobos665/split2-recomp \
+  --base main \
+  --head Sellot4pe:fix/comprehensive-engine-audit \
+  --draft \
+  --title "Comprehensive US widescreen and uncapped engine audit" \
+  --body-file build/engine-audit/pr-body.md
+```
+
+The PR body must explicitly state that it overlaps #52–#55, document the known
+minigun overheat follow-up, and avoid claiming the uncapped knockback or
+sci-fi pistol bob is resolved.
 
 ## Risks and cleanup
 
@@ -971,6 +1223,13 @@ Items worth reviewing in the PR:
   dedicated live captures.
 - Captures and synthetic scripts live under ignored `build/`; a fresh clone
   needs the listed artifacts before the capture-based regression tool can run.
+- The minigun wrapper is gated to animation type `5`, action state `1` and a
+  persistent held-trigger value, but it intentionally restores the transient
+  firing pulse after `0x000B3E10` so other subsystems do not observe the
+  forced value.
+- The minigun spin fix and the known overheat discrepancy share the same
+  firing-pose branch. Review them together, but do not regress the measured
+  0.900/0.901-second spin ramp.
 
 No code was changed in `xboxrecomp`, and no procedural/tessellated mask work
 should be started. If a new edge failure appears, first prove whether its X
