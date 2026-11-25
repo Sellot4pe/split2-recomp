@@ -36,14 +36,27 @@ Those are documented below and should not be conflated with the completed
 scope or minigun spin fixes. Direct 4:3, vintage-rifle and hip-fire regression
 captures remain routine PR work.
 
-Draft PR #57 is open for review visibility:
+PR #52 now carries the focused widescreen and final sniper-scope work:
+
+```text
+https://github.com/phobos665/split2-recomp/pull/52
+#52 Fix widescreen aiming, bullet decals, and sniper scope in the US release
+Head: ddd7142
+Draft: no
+```
+
+PR #57 is now the stacked minigun review:
 
 ```text
 https://github.com/phobos665/split2-recomp/pull/57
+#57 Restore minigun spin-up in uncapped US gameplay
+Draft: yes
 ```
 
-It intentionally remains a draft because the uncapped minigun overheat issue
-is unresolved and the branch overlaps the smaller open PRs #52–#55.
+The minigun review intentionally remains a draft because the uncapped
+overheat issue is unresolved. It depends on timing changes that are still
+represented by other open PRs, so GitHub may show those prerequisite commits
+until they land; `f176093` is the substantive minigun change.
 
 ## Current repository state
 
@@ -65,6 +78,19 @@ e26b0fb  Document the remaining sniper scope mask investigation
 d1318eb  Keep sniper scope ammo groups together
 a6a6676  Keep the sniper cartridge row beside its ammo count
 ```
+
+The focused scope branch supplied to PR #52 is:
+
+```text
+fork/fix/us-widescreen-overlays
+330a7e0  Align the sniper scope before widescreen clipping
+ddd7142  Keep the vintage scope wrapper independent of supersampling helpers
+```
+
+PR #52's branch is 18 commits ahead of `7a3345f`. Its tip adapts the final fix
+originally developed as `2e30a55` without pulling in the supersampling helper
+or unrelated timing work. It compiled independently from that branch and
+passed the same scope replay checks.
 
 Successful vintage-rifle commits and checkpoints:
 
@@ -107,11 +133,20 @@ build/Release/split2_recomp
 sha256 3e41a53fc9325057c61625627a45eec213e0e35b38c433a53031c1fdbcb38b91
 ```
 
-The branch is 49 commits ahead of upstream `main` at `7a3345f`. Open upstream
-PRs #52 through #55 cover smaller subsets of the same audit. The comprehensive
-branch is open as **draft** PR #57 until its known uncapped follow-ups are
-resolved and the maintainer decides whether to prefer the combined branch or
-the smaller PRs.
+The integration branch is based on upstream `main` at `7a3345f` and retains
+all code/tests. The review structure is now:
+
+- PR #52: focused widescreen, aiming, bullet-decal and final scope work;
+- PR #53: US story callbacks;
+- PR #54: ammo rows and heat haze;
+- PR #55: supersampling clarity;
+- PR #57: stacked draft minigun spin-up change and its uncapped timing
+  prerequisites.
+
+PR #57 cannot yet be reduced to a one-commit diff against `main` because
+`f176093` reads the free-step state introduced by the uncapped gameplay work.
+Once its prerequisite PRs merge, retain `f176093` and rebase the minigun PR
+onto the updated `main`; do not duplicate the prerequisite implementations.
 
 ## Latest uncapped minigun work
 
@@ -1180,40 +1215,39 @@ RECOMP_TS2_UI_SITES=1 ./split2_recomp
 ## PR status and preparation
 
 Upstream is `phobos665/split2-recomp`, whose current `main` is `7a3345f`.
-Open PRs #52 through #55 cover smaller subsets of this audit:
+The review split is:
 
 ```text
-#52  widescreen aiming, decals and initial scope alignment
+#52  widescreen aiming, decals and final scope alignment
 #53  US story NPC, canyon door and checkpoint callbacks
 #54  ammo rows and candle heat haze
 #55  supersampling clarity
+#57  minigun spin-up, stacked on the uncapped and rendering prerequisites
 ```
 
-The comprehensive branch is a 49-commit superset and includes additional US
-menu, timing, scope-edge and minigun work. A combined PR is useful for review
-visibility, so it was opened as draft PR #57 because the minigun overheat
-follow-up remains unresolved and the maintainer may prefer the smaller PRs.
-At handoff time GitHub reports it as mergeable with no CI checks reported:
+PR #52 now contains the complete final scope implementation rather than only
+the initial lens placement. Its branch was rebuilt, all 31 toolkit tests
+passed, and the 4:3, tagged 16:9 and synthetic mask checks passed. At handoff
+time GitHub reports both PRs as mergeable with no CI checks reported:
 
 ```text
-https://github.com/phobos665/split2-recomp/pull/57
-#57 Comprehensive US widescreen and uncapped engine audit
-Draft: yes
-Mergeable: MERGEABLE
+#52: ready for review, head ddd7142, mergeable
+#57: draft, head is the documentation commit containing this file, mergeable
 ```
 
-Verify its current state from the repository root:
+Verify the current state from the repository root:
 
 ```bash
+gh pr view 52 --repo phobos665/split2-recomp \
+  --json url,title,isDraft,state,mergeable,headRefOid,baseRefName,headRefName
 gh pr view 57 --repo phobos665/split2-recomp \
-  --json url,title,isDraft,state,mergeable,baseRefName,headRefName
+  --json url,title,isDraft,state,mergeable,headRefOid,baseRefName,headRefName
 ```
 
-The PR body explicitly states that it overlaps #52–#55, documents the known
-minigun overheat follow-up, and does not claim the uncapped knockback or
-sci-fi pistol bob is resolved. Keep the PR in draft until maintainers choose
-between the combined and smaller-PR strategies and the known uncapped issues
-have been addressed or accepted as follow-ups.
+The PR #57 body identifies `f176093` as the substantive minigun change,
+documents the known overheat follow-up, and does not claim the uncapped
+knockback or sci-fi pistol bob is resolved. Keep it in draft until the
+overheat issue is addressed or explicitly accepted as a follow-up.
 
 ## Risks and cleanup
 
