@@ -4,8 +4,9 @@
 
 - Repo: `/tmp/split2-engine-audit`
 - Branch: `fix/comprehensive-engine-audit`
-- HEAD: `f7e8178` (working tree clean)
-- Submodule `xboxrecomp`: pinned at `6005f19`
+- HEAD: branch tip containing this handoff update
+- Submodule `xboxrecomp`: pinned at `c9fd93a`
+  (`fix/two-d-side-centre-band`)
 - Checkpoints: `checkpoint/vintage-scope-done` (on `2996cfb`),
   `checkpoint/vintage-scope-stretched-covered`
 - Full prior session log:
@@ -29,26 +30,33 @@ F11 captures land in `build/Release/frame*.d3dcap`. Replay with
 - Cutscene/vblank pacing trace (`85ed1ff`)
 - Vintage scope fully fixed in widescreen (`e9ff711`..`2996cfb`)
 - Sniper scope shade (`5388827`) and text/icon placement (`cf4497a`, `34a3184`)
+- Sniper scope cartridge row stays beside the count while aiming
+  (toolkit `c9fd93a`)
 
-## Remaining issue: sniper scope ammo readout sways with the scope
+## Fixed: sniper scope cartridge row sway
 
-Sites: bullet glyphs `0x14C723` -> `sub_001C8E35` (reserve), ammo number
-`0x1B0A52` -> `sub_001B75F0`. Both draw in the camera's local space through
-the shared view matrix (`c64`-`c67`), which sways with the scope. The Hor+
-projection (applied to register `c60` in `xboxrecomp/src/d3d/d3d8_vsh.c`)
-amplifies the horizontal component in 16:9, so the readout drifts left with
-the aim.
+The visible drift is the 128x32 cartridge strip, drawn as a screen-space
+quad through the shared ammo-HUD site `0x000BEDE7`. The numeric count is a
+separate draw (`0x000C37BA`) and was already centred. The earlier
+`0x14C723`/`0x1B0A52` diagnosis was misleading because batching carried
+those tags across unrelated geometry.
 
-Tried and reverted: pinning `c64` around the reserve (`1d6e91c`) and around
-the flush gated on batch site (`d424e00`). The reserve is too early (the real
-draw is the later flush), and the flush gate is unreliable across the 3D
-batch, so it froze the first-person viewmodel. Both were reverted.
+`SIDE` placement chose the right edge for the normal hip-fire row, but chose
+the left edge for the scope row while its midpoint was between 25% and 33%
+of the screen. The left-anchored widescreen squeeze then moved the cartridge
+strip about 80 pixels away from the count. The toolkit now keeps SIDE draws
+in the centre from 25% up to the existing right-side boundary
+(`xboxrecomp/src/d3d/d3d8_device.c`, `two_d_side_anchor`). The right-side
+threshold is unchanged because the hip-fire row can sit just inside the
+right third.
 
-Recommended real fix: give the readout its own fixed transform (screen space)
-rather than sharing the view matrix. This is a lift-aware change: patch the
-lifted text path and teach the lifter to preserve it, or add a per-draw
-transform override with a reliable way to identify only the readout's 2D
-batch. Do this in a scoped session with in-game checks after each step.
+Verified by replaying the saved scope capture: the row moved from x=117..149
+to x=197..229, leaving a 16-pixel gap before the count. The hip-fire capture
+was pixel-identical. Two live F11 captures with the patched build showed the
+row aligned with the count at both scope positions. All 31 toolkit tests pass.
+
+The earlier attempts to pin `c64` around the reserve (`1d6e91c`) and flush
+(`d424e00`) targeted the wrong layer and were correctly reverted.
 
 ## Also remaining: low-resolution screen-copy effects
 
