@@ -1,789 +1,979 @@
-# TimeSplitters 2 — sniper scope handoff
+# TimeSplitters 2 — sniper scope edge-fix handoff
 
-## Current state
+## Status
 
-- Repo: `/tmp/split2-engine-audit`
-- Branch: `fix/comprehensive-engine-audit`
-- Current branch tip: this documentation/tooling commit
-- Last gameplay commit: `903bde1` (`Keep the sniper ammo outline with its count`)
-- `xboxrecomp` pin: `c9fd93a` on local branch `fix/two-d-side-centre-band`
-- Toolchain checkpoints: `checkpoint/vintage-scope-done` (`2996cfb`) and
-  `checkpoint/vintage-scope-stretched-covered`
-- The Release build at `build/Release/split2_recomp` was rebuilt after the
-  successful ammo fixes.
-- The toolkit regression suite passed 31/31 from
-  `/tmp/split2-xboxrecomp-tests`.
-- The working tree should contain no gameplay changes after this handoff is
-  committed. The pre-existing untracked `replay000.bmp` is user data; leave it
-  alone.
+The modern sniper scope edge issue is fixed in commit:
 
-The remaining issue is only the sniper scope's mask at extreme horizontal aim.
-The HUD/readout defects described below are fixed and must not regress.
+```text
+2e30a55 Align the sniper scope before widescreen clipping
+```
 
-## Symptom, reproduction and expected behaviour
+The fix preserves the game's original eight-piece scope mask, four textured
+corners, alpha rectangle, reticle and readout. It does **not** replace the mask
+with procedural or tessellated geometry.
 
-### Symptom
+The implementation was independently inspected against the generated guest
+code, rebuilt, and checked against tagged 4:3/16:9 captures and synthetic
+native-mask replays. The user also visually confirmed the final right-edge and
+bullet-impact frames.
 
-When the sniper scope approaches the left or right screen edge, part of the
-scope mask stops forming the expected lens shape. A large clear area becomes a
-rectangle with a hard vertical boundary and horizontal top/bottom edges. The
-world is visible inside that rectangle while the surrounding shade is opaque.
+No unresolved fundamental rendering problem is known. The remaining work is
+routine direct regression capture in 4:3, the vintage rifle and ordinary
+hip-fire, followed by PR preparation.
 
-This occurs while holding the scoped view and panning horizontally. It is not
-the ammo readout drifting and it is not the dark duplicate `10`; both of those
-are fixed.
+## Current repository state
 
-The latest symptom images are:
+Repository:
 
-- `build/engine-audit/scope-border-handoff/left-edge-symptom.jpg`
-- `build/engine-audit/scope-border-handoff/right-edge-symptom.jpg`
+```text
+/tmp/split2-engine-audit
+```
+
+Branch and commits:
+
+```text
+fix/comprehensive-engine-audit
+Handoff commit: this documentation commit (`git log -1`)
+2e30a55  Align the sniper scope before widescreen clipping
+e26b0fb  Document the remaining sniper scope mask investigation
+903bde1  Keep the sniper ammo outline with its count
+d1318eb  Keep sniper scope ammo groups together
+a6a6676  Keep the sniper cartridge row beside its ammo count
+```
+
+Successful vintage-rifle commits and checkpoints:
+
+```text
+d82f075  Widen the vintage scope side strips in widescreen
+4bceb24  Meet the vintage scope strips to the inset lens quadrants
+7efd0d8  Revert the vintage scope strip widening
+3fc0ddb  Extend the vintage scope mask past the screen
+974a406  Keep the vintage scope gradient 1:1 when extending the mask
+1b935c2  Stretch the vintage scope mask quadrants
+checkpoint/vintage-scope-stretched-covered = 1b935c2
+90c5c9c  Make the vintage scope fade circular in widescreen
+1d47f7e  Stretch the vintage scope vertical crosshair
+2996cfb  Align the vintage scope lens with the aiming ray
+checkpoint/vintage-scope-done = 2996cfb
+```
+
+Toolkit submodule:
+
+```text
+xboxrecomp c9fd93a
+Keep drifting centre-side HUD rows centred
+```
+
+The submodule is clean. Its commit is the preserved `SIDE` threshold change
+used by the ammunition readout and must not be reverted.
+
+The only untracked root-level file is the pre-existing:
+
+```text
+replay000.bmp
+```
+
+Treat it as user data and leave it untouched.
+
+The current Release executable is:
+
+```text
+build/Release/split2_recomp
+sha256 a77d7725411e8831985a091113ced038df5ca7b08417a3d48add45f45a065047
+```
+
+## Symptom and expected behaviour
+
+### Historical symptom
+
+Holding the modern sniper rifle in Siberia, especially the saved sniper
+checkpoint, and panning to the left or right edge caused part of the scope
+overlay to stop at the old 4:3 clipping boundary. Depending on the
+intermediate patch state this appeared as:
+
+- a hard rectangular boundary where the rounded lens should continue;
+- missing or incorrectly placed rounded-corner arcs at a screen edge;
+- a detached/dark duplicate ammunition outline;
+- scope coordinates or the reticle stopping before the visible widescreen
+  edge.
+
+The earlier duplicate `10`, grouped ammunition row and initial left/right
+placement problems were separate fixes and are preserved.
+
+### Final fixed symptom
+
+At an extreme aim position, the clear aperture is allowed to extend beyond the
+physical screen. The visible portion now keeps the original rounded/faded
+transition, the opaque shade covers both sides continuously, and the reticle
+can reach the screen edge.
+
+The final hand-tested frame is:
+
+```text
+build/engine-audit/scope-border-validation/fixed-169/last.png
+```
+
+A numerically cropped, small viewing copy is:
+
+```text
+build/engine-audit/scope-border-validation/last-reticle-crop.png
+```
+
+It shows the bullet impact at the reticle.
 
 ### Reproduction
 
-1. Launch the US audit build in 16:9 with site tagging:
-
-   ```bash
-   cd /tmp/split2-engine-audit/build/Release
-   RECOMP_GAME_DIR=/tmp/split2-scope-live.xdrDlk/game \
-   RECOMP_USER_DIR=/tmp/split2-scope-live.xdrDlk/profile \
-   RECOMP_MUTE=1 RECOMP_FPS_CAP=60 RECOMP_RES_SCALE=1 \
-   RECOMP_WIDESCREEN=1 RECOMP_ASPECT_RATIO=16:9 \
-   RECOMP_TS2_UI_SITES=1 ./split2_recomp
-   ```
-
-2. Load the Siberia sniper checkpoint.
-3. Aim through the scope and pan slowly to the far left, then the far right.
-4. Press F11 at a broken edge. Keep `RECOMP_TS2_UI_SITES=1` so the resulting
-   `.d3dcap` has call-site tags and forced batch boundaries.
-
-The runtime paths above are an isolated copy. Do not run a test against the
-user's normal save.
-
-### Expected
-
-The opaque shade should remain continuous around the circular/rounded lens as
-the lens approaches an edge. A partly off-screen lens is acceptable if its
-visible boundary remains circular/rounded. A rectangular exposed band is not.
-
-## Fixed and verified: sniper ammo readout
-
-The following fixes are successful and must be preserved.
-
-### Cartridge strip
-
-The five gold cartridge glyphs are the 128x32 texture strip drawn through site
-`0x000BEDE7`.
-
-The normal hip-fire strip and the scope strip share the site, so a global
-placement change is wrong. At one scope position the strip's midpoint was 178
-of 640 pixels (27.8%). The old `SIDE` heuristic treated that as left-edge HUD
-and moved the strip about 80 pixels away from the count.
-
-Toolkit commit `c9fd93a` reduces only the left `SIDE` band from one third to one
-quarter of the screen. The right boundary remains at two thirds so the normal
-hip-fire row, whose midpoint can be about 67%, remains right-anchored.
-
-Relevant file:
-
-- `xboxrecomp/src/d3d/d3d8_device.c`, `two_d_side_anchor()`
-
-Replay evidence:
-
-- Before: cartridge row occupied x=117..149.
-- After: row occupied x=197..229, leaving 16 pixels before the count.
-- Hip-fire replay was pixel-identical.
-
-### Scope grouping
-
-The white ammo number is drawn through `0x000BE5FC`, not the small icon/range
-site `0x000C37BA`. The number and cartridge strip can cross the right `SIDE`
-boundary at different aim positions.
-
-The US project now sets `g_ts2_scope_active` for the rest of a frame after
-either `0x001C7EFF` (scope renderer) or `0x000CA58E` (shade) draws. While that
-flag is set, these shared HUD sites use `TS2_UI_CENTRE`:
-
-- `0x000BE5CF` — black font/outline layer
-- `0x000BE5FC` — white ammo number
-- `0x000BEDE7` — cartridge strip
-
-Outside scope frames they remain the normal `SIDE` layout. The frame-local flag
-is reset by `ts2_present()`.
-
-Relevant files and lines:
-
-- `src/recomp_manual.c`: `g_ts2_scope_active`, `ts2_present()`,
-  `ts2_ui_scope_marker()`, `ts2_ui_scope_place()`, `ts2_ui_reserve()`
-- `config/us/overrides.inc`: `ts2_ui_scope_marker()`,
-  `ts2_ui_scope_place()` and the two-dimensional placement table
-
-Commits:
-
-- `a6a6676` — quarter-width left `SIDE` band
-- `d1318eb` — scope grouping for white count and cartridge strip
-- `903bde1` — scope grouping for the black outline
-
-Verification:
-
-- `scope-grouping-live-a.jpg` and `scope-grouping-live-b.jpg` show the count
-  and cartridge strip together at two live aim positions.
-- The black shadow/duplicate `10` was isolated to `0x000BE5CF`. Centring it
-  removed that draw in `verified-ammo-outline-fix.jpg`; a subsequent live
-  capture also showed the dark `10` on the crate gone.
-
-## Remaining issue: sniper mask at horizontal aim limits
-
-### What is established
-
-This section is experimentally verified unless explicitly marked otherwise.
-
-The sniper mask is not the same renderer as the vintage rifle mask.
-
-The shared mask draw is wrapped at US `sub_001B54D0` (PAL `0x001B58E0`).
-Its real body is `sub_001B54D0_gen`. The wrapper currently calls
-`ts2_scope_mask_quad(site)` only when:
-
-- the site is in `0x000C2F37..0x000C3050`, or
-- the site is in `0x000C3AFA..0x000C3C13`, and
-- `g_ts2_depth == 1`, and
-- widescreen display is active.
-
-`ts2_scope_mask_quad()` scales only the inner X endpoints by
-`(guest_width * aspect_h) / (guest_height * aspect_w)`, normally 0.75.
-Endpoints equal to the viewport's left/right edge are left alone. The function
-then calls `sub_001B54D0_gen` and restores the original arguments.
-
-Relevant implementation:
-
-- `config/us/overrides.inc`, starting around `ts2_scope_mask_quad()`.
-
-### The eight mask pieces
-
-The first visible mask pass has eight untextured triangle-list quads. Sites,
-geometry at a centred scope, and role:
-
-| Site | Vertices at centred aim | Role |
-| --- | --- | --- |
-| `0x000C2F37` | x=0..185.75, y=0..106 | top-left |
-| `0x000C2F62` | x=454.25..639, y=0..106 | top-right |
-| `0x000C2F88` | x=0..185.75, y=106..374 | left |
-| `0x000C2FAF` | x=185.75..454.25, y=0..106 | top cap |
-| `0x000C2FD6` | x=454.25..639, y=106..374 | right |
-| `0x000C2FFD` | x=185.75..454.25, y=374..479 | bottom cap |
-| `0x000C3025` | x=0..185.75, y=374..479 | bottom-left |
-| `0x000C3050` | x=454.25..639, y=374..479 | bottom-right |
-
-At the centred position the lens is roughly x=185.75..454.25 and
-y=106..374, approximately 268.5 by 268 guest pixels.
-
-All eight sites are currently `TS2_UI_STRETCH`.
-
-The mask is drawn twice in the captured scope:
-
-- first pass: `colorwrite=0x7`
-- second pass: `colorwrite=0x8`
-
-Each pass contains the same eight site IDs and geometry. In the tagged
-right-edge capture they are draws 17-24 and 30-37.
-
-Draw state for the untextured pieces:
-
-- primitive: 4 (triangle list)
-- primitive count: 2
-- stride: 16 bytes (position plus vertex colour)
-- vertex shader: `0x10001` in the capture/replay, two instructions
-- blend: `1 5>6`
-- no texture bound
-
-### Rounded corners and alpha rectangle
-
-The mask corners use a 64x64 texture, reported as format code `0x06` and
-runtime texture ID 17 in `right-edge-tagged.d3dcap`:
-
-| Site | Role |
-| --- | --- |
-| `0x000C3096` | top-left corner |
-| `0x000C30BF` | bottom-left corner |
-| `0x000C30E8` | top-right corner |
-| `0x000C3182` | bottom-right corner |
-
-These corner draws use:
-
-- primitive 4
-- two primitives per corner
-- stride 24 bytes
-- vertex shader `0x10000`
-- the same blend state as the mask
-
-`0x000C2F03` is an untextured alpha rectangle inside the mask. In the
-right-edge capture it is x=396..640, y=106..375; in the left-edge capture it
-is x=0..248, y=106..375. The right-edge capture was taken during the temporary
-corner/alpha `STRETCH` experiment, so use its gradient geometry as evidence
-but do not treat its corner/alpha placement chunks as the current table.
-
-The corner and alpha sites are currently `TS2_UI_CENTRE`. Leaving them there is
-part of the last known-good state.
-
-Other scope-inside markings use the remaining `0x000C31xx`,
-`0x000C32xx`, `0x000C34xx`, `0x000C35xx` and `0x000C36xx` sites listed in the
-placement table. Most are `TS2_UI_CENTRE`; `0x000C31F3` is `TS2_UI_STRETCH`.
-
-### Geometry at the broken edge
-
-The tagged right-edge capture contains:
-
-- inner lens left: x=377.0
-- inner lens right: x=645.5
-- lens top: y=106
-- lens bottom: y=374
-
-The right inner endpoint is 6.5 pixels beyond the 640-pixel viewport. The left
-side pieces span x=0..377, while the central band remains x=377..645.5. This
-produces the observed rectangular clear band from x=377 to the right edge.
-
-The untagged left-edge capture shows the mirror case:
-
-- inner lens left: -3.25
-- inner lens right: 265.25
-- the clear band is x=0..265.25
-
-The left-side mask pieces become degenerate or lie off-screen:
-
-- top-left: x=0..-3.25
-- left: x=0..-3.25, y=106..374
-- bottom-left: x=0..-3.25
-
-The important distinction is that this is not the renderer clipping the mask
-to the old 4:3 viewport. The captured mask draws run under:
-
-- viewport: 0,0 to 640x480
-- scissor: 0,0-639,479
-
-The full-screen scissor and viewport mean the rectangular edge is in the guest
-mask geometry, not host-side scissor clipping.
-
-### Why this differs from the vintage scope
-
-The successful vintage-rifle fix in commits `e9ff711` through `2996cfb` was
-needed because:
-
-1. The vintage mask is four textured quads using `oldscopeedge.xbt`; its
-   circular hole is baked into the texture.
-2. The quads moved with aim, but their outer edges stopped at the 4:3 picture.
-3. The mask quadrants were `CENTRE`, so the host also applied a 4:3 viewport
-   and scissor to them.
-4. The fix extends the outer edge to +/-2000, compensates the gradient UVs, and
-   changes the movable quadrants to `STRETCH`.
-
-Useful failed steps from that investigation:
-
-- `d82f075` and `4bceb24` added static black side strips. They failed because
-  the vintage overlay itself moves with aim; the strips covered the lens at one
-  side while leaving gaps at the other. Reverted by `7efd0d8`.
-- `3fc0ddb` extended the textured mask outward but stretched its gradient.
-  `974a406` corrected that by scaling the texture coordinate with the edge.
-- Initial quadrant placement stayed `CENTRE`; that kept the host scissor at
-  4:3 and clipped the extended mask. `1b935c2` changed those quadrants to
-  `STRETCH`.
-- `90c5c9c`, `1d47f7e`, and `2996cfb` then corrected the circular fade,
-  vertical crosshair, and lens position relative to the aiming ray.
-
-That solution cannot be applied unchanged to the sniper scope:
-
-- The sniper mask's clear inner boundary is real geometry, not a texture hole.
-- Its eight gradient sites are already `STRETCH`.
-- Its outer endpoints already coincide with the full 640-pixel viewport.
-- Its scissor is already full-screen.
-
-Extending the sniper mask's outer endpoints to +/-2000 was tested against the
-left-edge capture and changed exactly zero pixels. See
-`attempt-outer-edge-extension.jpg`.
-
-## Attempts and results
-
-### Verified successful
-
-- `c9fd93a`: changed only the left `SIDE` threshold from one-third to
-  one-quarter. Fixed the cartridge strip jumping to the left anchor.
-- `d1318eb`: made the white ammo count and cartridge strip use `CENTRE`
-  whenever a scope marker has appeared in the current frame.
-- `903bde1`: added the black outline site `0x000BE5CF` to that scope-only
-  grouping. Fixed the dark duplicate `10`.
-
-### Tested and unsuccessful
-
-1. **Pin the shared camera matrix `c64` around the readout reserve**
-   (`1d6e91c`)
-   - Reserve occurs too early; the actual batched draw happens later.
-   - Reverted by `f7e8178`/the corresponding revert sequence.
-
-2. **Pin `c64` around the flush using batch-site tracking** (`d424e00`)
-   - Site tracking was stale across the mixed 3D batch and froze parts of the
-     first-person viewmodel.
-   - Reverted by `91d50a4`.
-
-3. **Extend the sniper mask's outer X endpoints beyond the viewport**
-   - Tested by modifying the captured vertices offline.
-   - Result: zero changed pixels because the outer edges already meet the
-     viewport.
-   - Reverted; no code change kept.
-   - Evidence: `attempt-outer-edge-extension.jpg`.
-
-4. **Move the corner and alpha sites `0x000C3096`, `0x000C30BF`,
-   `0x000C30E8`, `0x000C3182`, and `0x000C2F03` from `CENTRE` to
-   `STRETCH`**
-   - Tested in the live build at the right edge.
-   - It changed the corner gradients over approximately
-     x=377..420, y=139..340, but the rectangular clear band remained.
-   - It can move the corner texture away from the geometry it is meant to
-     soften.
-   - Reverted; current table has all five at `CENTRE`.
-   - Evidence: `attempt-corner-placement.jpg`.
-
-5. **Shift the whole lens inward by 55.5 pixels**
-   - Tested offline by editing mask/corner/alpha vertices in
-     `left-edge-untagged.d3dcap`.
-   - The lens moved inward, but the rectangular band remained.
-   - This disproves the narrow hypothesis that a simple travel clamp alone
-     fixes the shape.
-   - Reverted; no code change kept.
-   - Evidence: `attempt-lens-shift.jpg` and
-     `attempt-lens-shift.d3dcap`.
-
-### Important tagging warning
-
-Without `RECOMP_TS2_UI_SITES=1`, captures can contain many draws under tag
-`00000000`. Tags also persist across more than one draw until the next
-placement chunk. Do not assume a tag identifies exactly one draw.
-
-When isolating contributions:
-
-- use `RECOMP_TS2_UI_SITES=1`;
-- prefer `--no-scene` when comparing hidden/solo draws;
-- use `--draws N --dump-drawn --dump-target` to inspect one mask pass;
-- verify against captured vertices, not only `--hide-tag`.
-
-## Preserved captures, logs and analysis tools
-
-The stable artifact directory is:
-
-`/tmp/split2-engine-audit/build/engine-audit/scope-border-handoff`
-
-This directory is under ignored `build/` because captures contain game data.
-
-### Captures and images
-
-- `right-edge-tagged.d3dcap` — tagged right-edge failure, 4.0 MiB. It was
-  captured with the temporary corner/alpha `STRETCH` experiment; the gradient
-  geometry and symptoms are useful, while the tag/placement log must be read
-  with that caveat.
-- `right-edge-tagged.bmp` — corresponding live frame, 640x480.
-- `right-edge-symptom.jpg` — compressed viewing copy.
-- `left-edge-untagged.d3dcap` — left-edge failure, 46 MiB, useful for exact
-  mask geometry but without site tags.
-- `left-edge-untagged.bmp` and `left-edge-symptom.jpg`.
-- `scope-readout-grouping-tagged.d3dcap` — tagged scope/readout reference,
-  5.1 MiB.
-- `scope-readout-grouping-tagged.bmp` and `scope-readout-grouping.jpg`.
-- `scope-pre-grouping-tagged.d3dcap` — earlier tagged scope capture showing the
-  pre-fix readout jump; 4.9 MiB.
-- `scope-pre-grouping-tagged.bmp`.
-- `scope-grouping-live-a.d3dcap` / `.bmp` and `.jpg`.
-- `scope-grouping-live-b.d3dcap` / `.bmp` and `.jpg`.
-- `hip-tagged.d3dcap` / `.bmp` — normal hip-fire HUD reference.
-- `verified-ammo-outline-fix.jpg` — before/after evidence for `0x000BE5CF`.
-- `attempt-outer-edge-extension.jpg`.
-- `attempt-outer-edge-extension.d3dcap` — offline outer-edge test capture.
-- `attempt-corner-placement.jpg`.
-- `attempt-lens-shift.d3dcap` and `attempt-lens-shift.jpg`.
-
-### Draw listings and run logs
-
-- `right-edge-tagged-draws.log`
-- `left-edge-untagged-draws.log`
-- `scope-readout-grouping-tagged-draws.log`
-- `hip-tagged-draws.log`
-- `right-edge-tagged-run.log` — `[TS2-UI]` site chains and live run state.
-- `scope-grouping-run.log` — successful scope grouping run.
-
-Original working copies also remain under
-`/tmp/split2-scope-live.xdrDlk/`. The build directory is the safer reference
-because it is stable for this workspace.
-
-### Capture probe
-
-`tools/scope_capture_probe.py` parses a `.d3dcap` without a GPU and prints draw
-metadata plus vertices. Its draw numbering matches `d3d8_replay --list-draws`.
-
-Examples:
-
-```bash
-cd /tmp/split2-engine-audit
-
-# Exact left-edge mask vertices.
-python3 tools/scope_capture_probe.py \
-  build/engine-audit/scope-border-handoff/left-edge-untagged.d3dcap \
-  --draws 12-16 --vertices -1
-
-# Tagged right-edge mask vertices.
-python3 tools/scope_capture_probe.py \
-  build/engine-audit/scope-border-handoff/right-edge-tagged.d3dcap \
-  --sites 000C2F37,000C2F62,000C2F88,000C2FAF,000C2FD6,000C2FFD,000C3025,000C3050 \
-  --vertices -1
-```
-
-## Build, run and replay
-
-### Release build
-
-```bash
-cmake --build /tmp/split2-engine-audit/build/Release -j6
-```
-
-The game executable is:
-
-`/tmp/split2-engine-audit/build/Release/split2_recomp`
-
-The replay executable is:
-
-`/tmp/split2-engine-audit/build/Release/xboxrecomp/src/replay/d3d8_replay`
-
-### Run with logging and site tags
+Run the isolated copy, not the user's normal save:
 
 ```bash
 cd /tmp/split2-engine-audit/build/Release
+
 RECOMP_GAME_DIR=/tmp/split2-scope-live.xdrDlk/game \
 RECOMP_USER_DIR=/tmp/split2-scope-live.xdrDlk/profile \
 RECOMP_MUTE=1 RECOMP_FPS_CAP=60 RECOMP_RES_SCALE=1 \
 RECOMP_WIDESCREEN=1 RECOMP_ASPECT_RATIO=16:9 \
-RECOMP_TS2_UI_SITES=1 ./split2_recomp \
-  > /tmp/split2-scope-investigation.log 2>&1
+RECOMP_TS2_UI_SITES=1 ./split2_recomp
 ```
 
-F11 writes `frameNNN.bmp` and `frameNNN.d3dcap` beside the executable.
+Load the Siberia sniper save, equip the modern sniper, aim through the scope,
+and pan to full left/right. Press F11 to capture a tagged frame.
 
-### Replay
-
-Render the right-edge failure:
+For a reproducible bounded run:
 
 ```bash
 cd /tmp/split2-engine-audit
-RECOMP_WIDESCREEN=1 RECOMP_RES_SCALE=1 \
-  build/Release/xboxrecomp/src/replay/d3d8_replay \
-  build/engine-audit/scope-border-handoff/right-edge-tagged.d3dcap \
-  --no-scene --present --out /tmp/scope-right-replay --quiet
+
+python3 build/engine-audit/scope-border-validation/run-game.py \
+  check-169 --ratio 16:9 \
+  --sequence build/engine-audit/scope-border-validation/siberia-c.seq \
+  --duration 53 --captures 1730 90 14
 ```
 
-List every draw and state:
+The script uses the isolated profile/game directories under
+`build/engine-audit/scope-border-validation`.
 
-```bash
-build/Release/xboxrecomp/src/replay/d3d8_replay \
-  build/engine-audit/scope-border-handoff/right-edge-tagged.d3dcap \
-  --no-scene --list-draws --quiet \
-  > /tmp/scope-right-draws.log 2>&1
+## Root cause
+
+This is a coordinate-space ordering bug, not a defect in the original scope
+geometry.
+
+The modern sniper renderer at US `0x000C2CB0` lays out the optic in the guest's
+640×480/4:3 coordinate system. Its one caller is:
+
+```text
+src/recomp/gen/recomp_0019.c:13078
+0x000C8C76 -> sub_000C2CB0
 ```
 
-Render only the first mask pass:
+The caller pushes four arguments in the order observed on the guest stack:
 
-```bash
-build/Release/xboxrecomp/src/replay/d3d8_replay \
-  build/engine-audit/scope-border-handoff/left-edge-untagged.d3dcap \
-  --no-scene --draws 13 --dump-drawn --dump-target --present \
-  --out /tmp/scope-mask-pass --quiet
+```text
+edi, eax, 1.0f, 1
 ```
 
-Skip the geometric mask:
+The fourth argument, `TS2_MEM32(g_esp + 16u)`, is the modern-scope mode used
+by the fix. `sub_000C2CB0` has no other generated call site.
 
-```bash
-build/Release/xboxrecomp/src/replay/d3d8_replay \
-  build/engine-audit/scope-border-handoff/left-edge-untagged.d3dcap \
-  --no-scene --skip-draw 12 --present \
-  --out /tmp/scope-no-mask --quiet
+Inside `sub_000C2CB0_gen`, the lens, mask, alpha rectangle, corners, reticle,
+markings, font glyphs and cartridge strip are calculated and clipped in that
+640×480 space. The old host path then applied the widescreen `CENTRE`
+placement, which squeezes X by the 4:3/16:9 correction factor (normally
+`0.75`) and narrows the GPU viewport/scissor **after** guest clipping and
+glyph culling had already occurred.
+
+The renderer cannot recover geometry or glyphs that the guest discarded at
+the old 640-pixel boundary. Moving the surviving vertices with `CENTRE` also
+put their rounded transitions in a different coordinate space from the
+already-positioned shade.
+
+The correction therefore has to move the modern scope's X coordinates into
+display space **before** the guest's culling and clipping, then submit those
+draws through a full-width `STRETCH` viewport.
+
+## Exact coordinate evidence
+
+The native 4:3 reference lens is 358 pixels wide:
+
+```text
+centred aperture: x=141..499, y=106..374
 ```
 
-Skipping draw 12 removes the rectangular shade. That is direct evidence that
-the eight-piece mask pass, not the scene copy or scissor, creates the cutoff.
+The equivalent 16:9 placement uses:
 
-### Replay placement overrides
-
-`--place` is useful for tagged captures but can affect every draw carrying the
-tag until the next placement chunk. Use one `--place` per site:
-
-```bash
-build/Release/xboxrecomp/src/replay/d3d8_replay \
-  build/engine-audit/scope-border-handoff/right-edge-tagged.d3dcap \
-  --place 000C2F37=stretch --place 000C2F62=stretch \
-  --place 000C2F88=stretch --place 000C2FAF=stretch \
-  --place 000C2FD6=stretch --place 000C2FFD=stretch \
-  --place 000C3025=stretch --place 000C3050=stretch \
-  --no-scene --present --out /tmp/scope-placement-test --quiet
+```text
+x' = 320 + (x - 320) * 0.75
 ```
 
-### Toolkit tests
+giving:
 
-The standalone toolkit build used for tests is already configured at
-`/tmp/split2-xboxrecomp-tests`:
+```text
+centred fixed aperture: x=185.75..454.25, y=106..374
+```
+
+At the tagged right-side aim:
+
+```text
+guest aim x=575
+4:3 aperture x=396..754
+translated aperture x=377..645.5
+display aperture is clipped by the physical viewport to x=377..639
+```
+
+That partial aperture touching the right edge is intentional. The shade's
+viewport-side vertices remain pinned at `0` and `639`.
+
+At the tagged left-side aim:
+
+```text
+guest aim x=69
+translated aperture begins slightly left of x=0
+visible aperture ends near x=266
+```
+
+The synthetic native/fixed raster comparison proves the distinction:
+
+```text
+centre fixed: 0 differing RGB pixels
+left   fixed: 0 differing RGB pixels
+left   old:   316 differing pixels, bbox x=0..265,   y=106..373
+right  fixed: 0 differing RGB pixels
+right  old:   185 differing pixels, bbox x=378..638, y=106..373
+3x right: pixel-identical, 1920x1440
+```
+
+The small old differences are concentrated in the rounded corner transitions
+at the edge. They are not a reason to replace the mask. The difference image
+is:
+
+```text
+build/engine-audit/scope-border-validation/flat/difference-contact.jpg
+```
+
+The earlier hypothesis that the eight axis-aligned pieces alone required
+replacement was incomplete. They are the original shade construction around a
+geometric clear aperture. Once their inner X endpoints and all dependent
+overlay pieces are placed in the same coordinate space before guest clipping,
+the original shape is correct.
+
+## Original eight-piece mask
+
+The first sniper shade pass contains these eight untextured triangle-list
+quads. The second pass repeats the same geometry with a different colour-write
+mask.
+
+| US site | 4:3 centred span | Role |
+| --- | --- | --- |
+| `0x000C2F37` | x=0..141, y=0..106 | top-left |
+| `0x000C2F62` | x=499..639, y=0..106 | top-right |
+| `0x000C2F88` | x=0..141, y=106..374 | left |
+| `0x000C2FAF` | x=141..499, y=0..106 | top cap |
+| `0x000C2FD6` | x=499..639, y=106..374 | right |
+| `0x000C2FFD` | x=141..499, y=374..479 | bottom cap |
+| `0x000C3025` | x=0..141, y=374..479 | bottom-left |
+| `0x000C3050` | x=499..639, y=374..479 | bottom-right |
+
+At the final 16:9 centre position the inner endpoints are `185.75` and
+`454.25`; the outer viewport endpoints remain `0` and `639`.
+
+Draw state:
+
+- primitive `4` (triangle list);
+- two primitives per piece;
+- stride `16` (position plus packed colour);
+- vertex shader `0x10001`;
+- no texture bound;
+- blend `1 5>6`;
+- first pass `colorwrite=0x7`;
+- second pass `colorwrite=0x8`.
+
+The mask call chain is:
+
+```text
+000C2F37..000C3050 -> 001B5530 -> reserve
+```
+
+## Corner, alpha and screen state
+
+The four rounded corners are:
+
+| US site | Role |
+| --- | --- |
+| `0x000C3096` | top-left |
+| `0x000C30BF` | bottom-left |
+| `0x000C30E8` | top-right |
+| `0x000C3182` | bottom-right |
+
+They use a 64×64 texture. In the failure capture it is runtime texture 17,
+format code `0x06`, stride `24`, vertex shader `0x10000`, two triangle-list
+primitives and the same blend state as the shade.
+
+The alpha rectangle is:
+
+```text
+0x000C2F03
+```
+
+It is a two-triangle, stride-16, untextured draw with `colorwrite=0x8`. Its
+call chain is:
+
+```text
+000C2F03 -> 001B7501 -> 001B52E9 -> reserve
+```
+
+The captured mask runs with:
+
+```text
+viewport 0,0 640x480 z=0..1
+scissor  0,0..639,479
+```
+
+The earlier `0,0..638,478` scissor belongs to scene-target setup and is not the
+scope mask clip.
+
+Placement values in a capture:
+
+```text
+1 = STRETCH
+2 = CENTRE
+```
+
+The fixed mask, corners, alpha and reticle are all recorded as placement `1`
+during the modern-scope draw. The native 4:3 reference records its proportioned
+pieces as `2`; with a 4:3 display that does not introduce a widescreen squeeze.
+
+## Implementation
+
+All gameplay changes are in:
+
+```text
+config/us/overrides.inc
+```
+
+`config/us/overrides.inc` is included into `src/recomp_manual.c` during the
+relift. Generated guest source is not edited.
+
+### Modern-renderer activation
+
+Added:
+
+```c
+typedef struct { float centre, scale; } Ts2SniperLayout;
+static RECOMP_MANUAL_TLS Ts2SniperLayout g_ts2_sniper;
+```
+
+`sub_000C2CB0()` now wraps `sub_000C2CB0_gen()` and saves/restores the TLS
+layout state around the call.
+
+It enables the transform only when all of the following hold:
+
+- the fourth argument is nonzero (the modern-scope mode);
+- `d3d8_display_wide_now()` is true;
+- guest width, height, aspect numerator and denominator are valid;
+- the guest viewport starts at X=0 and ends at guest width−1;
+- the aspect correction is not exactly `1.0`.
+
+The scale is:
+
+```c
+((float)guest_w * aspect_h) / ((float)guest_h * aspect_w)
+```
+
+and the centre is `guest_w / 2`.
+
+### Shared float-X wrapper
+
+```c
+static float ts2_sniper_x(float x)
+{
+    return g_ts2_sniper.centre +
+           (x - g_ts2_sniper.centre) * g_ts2_sniper.scale;
+}
+```
+
+`ts2_sniper_places_quad()` requires:
+
+- active sniper layout;
+- an active UI-wrapper nesting depth;
+- the outermost draw site mapped to `TS2_UI_STRETCH`.
+
+`ts2_sniper_float_quad()` transforms float arguments at `g_esp+4` and
+`g_esp+12`, runs the generated function, then restores the original words.
+
+### Glyph and textured-quad paths
+
+`sub_001AB380()` performs the X transform before calling
+`sub_001AB380_gen()` so the helper's 640-pixel visibility test sees display
+coordinates.
+
+`sub_001B5E80()` applies the same transform to eligible textured quads. It
+excludes:
+
+- `0x001AB3FA`: a glyph draw whose X coordinates were already transformed at
+  `sub_001AB380`, avoiding a double scale;
+- `0x000C31F3`: the viewport-sized tint, which must remain full-screen.
+
+The other textured quads include the authored corner quads and cartridge
+strip.
+
+### Mask endpoint correction
+
+`sub_001B54D0()` already had the successful pre-Astra correction for the
+normal widescreen scope: scale interior mask endpoints around the guest
+centre and leave viewport-side endpoints alone.
+
+The final fix makes endpoint roles explicit while the modern renderer is
+active, because an interior endpoint can equal `0` or `639` at one aim value:
+
+- pin `x0` for `0x000C2F37`, `0x000C2F88`, `0x000C3025`;
+- pin `x1` for `0x000C2F62`, `0x000C2FD6`, `0x000C3050`;
+- transform the other endpoints.
+
+This avoids relying on a coordinate value to infer which side of the aperture
+the endpoint belongs to.
+
+### Inclusive integer rectangle clipping
+
+`sub_001B7450()` normally clips an inclusive integer rectangle to the guest
+viewport and hands four floats to `sub_001B52C0()`.
+
+During the modern-scope layout it:
+
+1. sorts the original X endpoints;
+2. transforms the inclusive pixel span;
+3. passes rounded inclusive display-pixel bounds to the original clipper;
+4. retains the exact float span in `g_ts2_sniper_span`;
+5. lets the original guest code continue to sort/clip Y and reject wholly
+   off-screen rectangles.
+
+When the original clipper reaches `sub_001B52C0()` through return address
+`0x001B7501`, the float writer intersects its arguments with the exact span.
+The writer adds one to `x1`, so the wrapper compensates for that convention.
+This keeps the reticle, alpha clear and meter at their original subpixel
+positions.
+
+### Placement
+
+While `g_ts2_sniper.scale` is active, `ts2_ui_scope_place()` returns
+`TS2_UI_STRETCH` for every draw in the modern scope call tree.
+
+Outside that call tree, the previous successful scope/HUD grouping remains:
+
+- `0x000BE5CF`;
+- `0x000BE5FC`;
+- `0x000BEDE7`.
+
+Those sites still use `TS2_UI_CENTRE` while a scope marker is active in the
+frame.
+
+## Guest call sites and wrappers
+
+All addresses are US unless marked PAL.
+
+### Modern sniper renderer
+
+- `0x000C2CB0` / `sub_000C2CB0_gen`: modern scope renderer.
+- `0x000C8C76`: sole caller of `sub_000C2CB0`.
+- `0x000C2F37`..`0x000C3050`: eight shade pieces.
+- `0x000C3096`, `0x000C30BF`, `0x000C30E8`, `0x000C3182`: rounded corners.
+- `0x000C2F03`: alpha-clear rectangle.
+- `0x000C31F3`: full-screen tint, excluded from quad transformation.
+- `0x000C34D2`: vertical reticle line.
+- `0x000C34E7`: horizontal reticle line.
+- `0x000C3503`, `0x000C3520`, `0x000C353B`, `0x000C354E`: remaining
+  reticle pieces.
+
+### Shared drawing wrappers
+
+- `0x001B5E80` / PAL `0x001B6290`: textured quad helper.
+- `0x001B54D0` / PAL `0x001B58E0`: mask gradient helper.
+- `0x001B5530`: mask gradient return-chain entry.
+- `0x001B7450` / PAL `0x001B7860`: inclusive integer rectangle clipper.
+- `0x001B7501 -> 0x001B52E9`: alpha/reticle writer chain.
+- `0x001B52C0` / PAL `0x001B56D0`: float rectangle writer.
+- `0x001AB380` / PAL `0x001AB7C0`: glyph visibility/quad helper.
+- `0x001AB3FA`: return into `sub_001B5E80`, excluded from a second transform.
+- `0x001C8E35`: shared vertex reserve.
+- `0x001C98AF`: shared batch flush.
+
+Observed tagged call chains:
+
+```text
+000C2F37 -> 001B5530 -> reserve
+000C3096 -> 001B75E0 -> 001B5F01 -> reserve
+000C2F03 -> 001B7501 -> 001B52E9 -> reserve
+000C34D2 -> 001B7501 -> 001B52E9 -> reserve
+000BE5CF -> 001ACD63 -> 001AC65F -> 001AB3FA -> 001B5F01 -> reserve
+000BE5FC -> 001ACAAF -> 001AC65F -> 001AB3FA -> 001B5F01 -> reserve
+000BEDE7 -> 001B75E0 -> 001B5F01 -> reserve
+```
+
+### Vintage rifle
+
+- `0x001B75A0` / PAL `0x001B79B0`: vintage mask wrapper.
+- `0x001B75A0_gen`: vintage mask body.
+- `0x000C2B81`, `0x000C2B9E`, `0x000C2BC4`, `0x000C2BE1`: four movable
+  vintage quadrants.
+
+The modern renderer state can only become active from `sub_000C2CB0`; the
+vintage path does not call it, so the new transform is inert when rendering
+the vintage scope.
+
+## Why the vintage fix was not sufficient
+
+The successful vintage fix established two important principles:
+
+1. UI geometry that must cover the wide screen has to use `STRETCH`, because
+   `CENTRE` applies a narrowed host viewport/scissor.
+2. Geometry that would otherwise end at the old 4:3 picture can be extended
+   beyond the physical viewport and clipped by the rasteriser.
+
+The vintage mask is four textured quads with the circular hole baked into its
+texture. Extending its outer edges to `±2000`, compensating the gradient UVs,
+and changing the quadrants to `STRETCH` fixes that representation.
+
+That approach alone did not fix the modern sniper because:
+
+- the modern aperture boundary is real untextured geometry;
+- its outer shade endpoints already reached the full guest viewport;
+- extending only those outer endpoints changed zero pixels;
+- its mask sites were already `STRETCH`;
+- the guest had already clipped/culled the moving corners, alpha rectangle and
+  reticle in the wrong coordinate system.
+
+The missing operation was the pre-clip X placement shared by the whole modern
+scope call tree.
+
+## Attempts, results and disposition
+
+Successful and retained:
+
+- `a6a6676`, `d1318eb`, `903bde1`: keep the cartridge row, white count and
+  black outline grouped in the scope.
+- toolkit `c9fd93a`: quarter-width left `SIDE` band; preserves hip-fire
+  placement.
+- `2e30a55`: pre-clip modern-scope X transform and full-width placement.
+
+Tested and rejected/reverted:
+
+1. **Extend only the modern mask outer X endpoints beyond the viewport**
+   - Offline replay changed zero pixels because those endpoints already met
+     the viewport.
+   - No code kept.
+   - Evidence: `build/engine-audit/scope-border-handoff/attempt-outer-edge-extension.jpg`.
+
+2. **Move only the corner and alpha sites to `STRETCH`**
+   - Changed the corner gradients but left the rectangular/old-boundary
+     behaviour.
+   - Reverted.
+   - Evidence: `attempt-corner-placement.jpg`.
+
+3. **Shift the entire lens inward by 55.5 pixels**
+   - Moved the aperture but did not remove the old-boundary failure.
+   - Offline only; no code kept.
+   - Evidence: `attempt-lens-shift.d3dcap`, `attempt-lens-shift.jpg`.
+
+4. **Pin the shared camera matrix during readout reserve**
+   - The reserve happened before the later batched draw.
+   - Reverted by `f7e8178`.
+
+5. **Pin the model-view matrix at batch flush**
+   - Site tracking leaked across a mixed 3D batch and froze the viewmodel.
+   - Reverted by `91d50a4`.
+
+6. **Static black side strips for the vintage scope**
+   - Covered or exposed the moving lens at different aim positions.
+   - Reverted by `7efd0d8`.
+
+No procedural mask, tessellated replacement, shader mask or texture rewrite was
+adopted. The current evidence does not justify any of those.
+
+## Verification completed
+
+### Geometry/reference comparison
+
+The committed regression tool is:
+
+```text
+tools/regression/test_us_scope.py
+```
+
+It compares a tagged native 4:3 centred reference with display-space tagged
+captures. It checks:
+
+- both mask passes and their order;
+- every shade and corner vertex;
+- corner texture coordinates;
+- alpha rectangle clipping;
+- both reticle lines and all visible reticle pieces;
+- `STRETCH` placement on 16:9 captures;
+- the recovered guest aim.
+
+All ten tagged 16:9 captures passed:
+
+```text
+frame000  guest aim (320, 240)
+frame001  guest aim (69, 240)
+frame002  guest aim (575, 240)
+frame003  guest aim (575, 240)
+frame004  guest aim (575, 240)
+frame005  guest aim (575, 240)
+frame006  guest aim (575, 240)
+frame007  guest aim (459, 240)
+frame008  guest aim (434, 240)
+frame009  guest aim (455, 240)
+```
+
+Frames 002–006 intentionally repeat the right aim; they are separate
+F11 captures, not six distinct aim positions.
+
+The 4:3 vertical comparison captures also passed:
+
+```text
+reference frame003: guest aim (320, 429)
+reference frame004: guest aim (320, 49)
+```
+
+Important capture caveat: `fixed-169/frameNNN.bmp` files are periodic shadow
+frames, while `fixed-169/frameNNN.d3dcap` files are later F11 captures. A BMP
+and a `.d3dcap` with the same number are **not paired frames**. Use the
+`.d3dcap` for geometry and the separately named final screenshots for visual
+evidence.
+
+### Pixel-level mask replay
+
+Synthetic flat-background recordings contain the native modern mask translated
+to known left/right aim positions. Replaying the fixed output reproduces the
+native artwork exactly:
+
+```text
+centre fixed: 0 differing RGB pixels
+left   fixed: 0 differing RGB pixels
+left   old:   316 differing RGB pixels, bbox (0, 106)-(265, 373)
+right  fixed: 0 differing RGB pixels
+right  old:   185 differing RGB pixels, bbox (378, 106)-(638, 373)
+right at 3x:  pixel-identical 1920x1440
+```
+
+The small viewing/difference artifacts are:
+
+```text
+build/engine-audit/scope-border-validation/flat/difference-contact.jpg
+build/engine-audit/scope-border-validation/review-contact.jpg
+```
+
+### Readout and duplicate outline
+
+At the fixed centre frame, the native row/count positions map as expected:
+
+```text
+4:3 cartridge strip x=405..453
+4:3 white count x=463..468.36
+4:3 black outline x=465..470.36
+
+16:9 fixed strip x=383.75..419.75
+16:9 fixed white count x=427.25..431.27
+16:9 fixed black outline x=428.75..432.77
+```
+
+The black outline remains 1.5 display pixels to the right of the white glyph
+and stays with the count, so the duplicate dark `10` does not reappear.
+
+At right-edge aim the count remains visible at approximately `x=618.5..630.05`
+instead of being detached or culled at the old centre boundary.
+
+### Aiming and bullet decal
+
+The final user frame shows a bullet impact centred on the reticle at the right
+side of the scope. The small crop is `last-reticle-crop.png`; the bright impact
+effect and dark bullet hole surround the horizontal/vertical reticle
+intersection. This confirms the visual fix did not separate the aiming point
+from the rendered reticle.
+
+The user reviewed the final frame and reported that it lines up perfectly.
+
+### 4:3 behaviour
+
+The transform is guarded by:
+
+```c
+d3d8_display_wide_now()
+```
+
+and by a non-unit aspect scale. With widescreen disabled it does not run.
+
+Native 4:3 scope references retain the original spans:
+
+```text
+centre aperture x=141..499
+left aperture   starts at x=-111 and ends at x=247
+right aperture  x=396..754
+```
+
+Current and saved-baseline deterministic 4:3 Siberia runs both completed
+successfully. Those runs do not reach the modern scope at the sampled swap
+counts, so a direct post-final-change 4:3 scope F11 capture remains a routine
+regression test rather than an already captured artifact.
+
+### Vintage and hip-fire
+
+The vintage visual replay remains fully covered on both sides:
+
+```text
+build/engine-audit/scope-border-validation/replay-vintage000.bmp
+```
+
+The current build's periodic hip-fire frame:
+
+```text
+build/engine-audit/scope-border-validation/fixed-169/frame008.bmp
+```
+
+shows the normal rifle/viewmodel and ammunition HUD without scope placement.
+It is a periodic frame and must not be paired with `frame008.d3dcap`.
+
+Direct live vintage-scope and hip-fire F11 captures on the final commit remain
+recommended before PR merge.
+
+### Build and test suite
+
+The Release build completed without warnings. Final reruns:
+
+```text
+31/31 toolkit tests passed
+timing test passed at 30, 60, 120, 144, 317 and 719 FPS
+python -m py_compile passed for the capture probe and scope regression tool
+git diff --check passed before the gameplay commit
+```
+
+Logs:
+
+```text
+build/engine-audit/scope-border-validation/build-rerun.log
+build/engine-audit/scope-border-validation/ctest-rerun.log
+build/engine-audit/scope-border-validation/timing-rerun.log
+build/engine-audit/scope-border-validation/pixels-rerun.log
+```
+
+## Exact verification commands
+
+Run from `/tmp/split2-engine-audit`.
+
+Build:
 
 ```bash
-cmake --build /tmp/split2-xboxrecomp-tests -j6
+cmake --build build/Release -j6
+```
+
+If `config/us/overrides.inc` is changed, relift before building:
+
+```bash
+/home/conor/.venvs/recomp/bin/python scripts/build.py \
+  --region us --relift --from lift --no-build
+cmake --build build/Release -j6
+```
+
+Check the native 4:3 reference against itself:
+
+```bash
+python3 tools/regression/test_us_scope.py \
+  build/engine-audit/scope-border-validation/reference-43/frame000.d3dcap \
+  build/engine-audit/scope-border-validation/reference-43/frame000.d3dcap \
+  --aspect 4:3
+```
+
+Check vertical aim in the native reference:
+
+```bash
+python3 tools/regression/test_us_scope.py \
+  build/engine-audit/scope-border-validation/reference-43/frame000.d3dcap \
+  build/engine-audit/scope-border-validation/reference-43/frame003.d3dcap \
+  build/engine-audit/scope-border-validation/reference-43/frame004.d3dcap \
+  --aspect 4:3
+```
+
+Check every fixed 16:9 capture:
+
+```bash
+python3 tools/regression/test_us_scope.py \
+  build/engine-audit/scope-border-validation/reference-43/frame000.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame000.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame001.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame002.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame003.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame004.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame005.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame006.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame007.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame008.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame009.d3dcap
+```
+
+Run synthetic mask pixel and 3×-scale replay:
+
+```bash
+python3 build/engine-audit/scope-border-validation/replay_validation.py \
+  > build/engine-audit/scope-border-validation/pixels-final.log
+cat build/engine-audit/scope-border-validation/pixels-final.log
+```
+
+Run toolkit tests:
+
+```bash
 ctest --test-dir /tmp/split2-xboxrecomp-tests --output-on-failure -j6
 ```
 
-To recreate it:
+Rebuild the standalone toolkit first if required:
 
 ```bash
-cmake -S /tmp/split2-engine-audit/xboxrecomp \
-  -B /tmp/split2-xboxrecomp-tests -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DXBOXRECOMP_EXTERNAL_SDL=ON \
-  -DXBOXRECOMP_DXC_INCLUDE=/tmp/split2-engine-audit/xboxrecomp/third_party/dxc/include/dxc \
-  -DXBOXRECOMP_DXC_LIBRARY=/tmp/split2-engine-audit/xboxrecomp/third_party/dxc/lib/libdxcompiler.so
+cmake --build /tmp/split2-xboxrecomp-tests -j6
 ```
 
-## Relevant guest addresses and call chains
-
-All addresses below are US unless marked PAL.
-
-### Text and HUD shared paths
-
-- `0x001C8E35` / `sub_001C8E35_gen` — shared vertex reserve.
-- `0x001C98AF` / `sub_001C98AF_gen` — shared batch flush.
-- `0x001B75F0` / `sub_001B75F0_gen` — PAL `0x001B7A00`; wrapped text/number
-  drawing path.
-- `0x001B5E80` / `sub_001B5E80_gen` — PAL `0x001B6290`; shared text/quad path.
-- `0x001B5F01` — inner reserve return used by number and outline chains.
-- `0x001B75E0` — inner return used by the number/outline chain.
-
-Observed site chains:
-
-- `0x000BE5CF`: `001ACD63 -> 001AC65F -> 001AB3FA -> 001B5F01 -> reserve`
-- `0x000BE5FC`: `001ACAAF -> 001AC65F -> 001AB3FA -> 001B5F01 -> reserve`
-- `0x000BEDE7`: `001B75E0 -> 001B5F01 -> reserve`
-
-Earlier addresses that were investigated but are not the final HUD sites:
-
-- `0x0014C723` — reserve return in the width-scaled/3D-projected ammo path.
-- `0x001B0A52` — caller into `sub_001B75F0`.
-- `0x000C37BA` — small in-lens icon/range/marker, already `CENTRE`.
-
-Do not base the readout fix on `0014C723`/`001B0A52`; batching carried those
-tags across unrelated geometry and produced the wrong initial diagnosis.
-
-### Scope marker, shade and mask
-
-- `0x001C7EFF` — scope renderer site used as the frame-local scope marker.
-- `0x000CA58E` — full-screen scope shade site; also marks the frame as scoped.
-- `0x000CA705` — scope postprocess site skipped at raised render scale.
-- `0x000CA261`, `0x000C9FCA` — additional low-resolution postprocess sites.
-- `0x001B54D0` — US wrapper around the shared mask draw; PAL `0x001B58E0`.
-- `0x001B54D0_gen` — real mask draw body.
-- `0x001B5530` — return-chain entry observed for mask gradients.
-- `0x001B5E80` chain — used by the mask corner texture draws.
-- `0x001B7501 -> 0x001B52E9` chain — used by the alpha rectangle.
-
-### Vintage-only path
-
-- `0x001B75A0` — US vintage mask wrapper; PAL `0x001B79B0`.
-- `0x001B75A0_gen` — real vintage mask draw.
-- The vintage mask is a textured hole, not the sniper's geometric ring.
-
-## Viewport, scissor and renderer placement
-
-Current renderer semantics:
-
-- `TS2_UI_STRETCH` disables the 2D squeeze and lets a screen-space draw span
-  the whole 16:9 frame.
-- `TS2_UI_CENTRE` keeps the title's 4:3 shape, applies a centred horizontal
-  squeeze, and narrows the viewport/scissor to the 4:3 region.
-- `SIDE` chooses left/right/centre from the draw extent.
-- `AUTO` falls back to the renderer's extent test.
-
-The renderer's `SIDE` thresholds are in
-`xboxrecomp/src/d3d/d3d8_device.c`:
-
-- x `< 25%` chooses LEFT;
-- x `> 66.67%` chooses RIGHT;
-- otherwise CENTRE.
-
-The left-quarter threshold is a successful TS2 HUD fix. Do not restore the
-one-third threshold without replaying the cartridge-strip and hip-fire cases.
-
-The mask capture reports:
-
-- viewport: `0,0 640x480 z 0..1`
-- scissor during mask draws: `0,0-639,479`
-
-An earlier scissor `0,0-638,478` belongs to the scene target setup and is not
-the mask clip.
-
-## Textures and render state
-
-- Eight sniper mask gradients: no texture; stride 16; two triangle-list
-  primitives; vertex shader `0x10001`; blend `1 5>6`; first pass
-  `colorwrite=0x7`, second pass `colorwrite=0x8`.
-- Four rounded corners: 64x64 texture, captured as runtime texture 17, format
-  code `0x06`; stride 24; vertex shader `0x10000`.
-- Alpha rectangle: no texture; stride 16; `colorwrite=0x8`.
-- Ammo cartridge strip: 128x32 texture, format code `0x0E`; site
-  `0x000BEDE7`.
-- Ammo glyphs/outlines: glyph atlas textures around 256x256 or 512x512,
-  format code `0x0E`; sites `0x000BE5CF` and `0x000BE5FC`.
-- Scope screen copy: 640x480 texture, format code `0x12`, followed by a
-  full-screen triangle-list draw. This is related to the separately deferred
-  low-resolution scope blur.
-
-Runtime texture IDs (`tex 17`, `tex 89`, etc.) are local to a capture. Prefer
-the site tag plus dimensions/format when identifying resources.
-
-## Verified findings versus untested hypotheses
-
-### Verified
-
-- The hard rectangular boundary is created by mask draw 12 in
-  `left-edge-untagged.d3dcap`; skipping that draw removes it.
-- The eight mask pieces leave the rectangular band when the lens centre
-  crosses the viewport.
-- The host scissor is full-screen during these draws.
-- Extending only the outer mask endpoints has no visible effect.
-- Changing the five corner/alpha sites to `STRETCH` does not remove the band.
-- Shifting the whole mask inward by 55.5 pixels does not remove the band.
-- The vintage outer-edge/UV fix addresses a different mask representation.
-- The ammo readout fixes are successful and independent of this mask issue.
-
-### Untested hypotheses
-
-- Whether the original Xbox behaves the same at a true extreme aim or whether
-  the game normally limits scope travel before the mask reaches this state.
-- Whether the intended lens is always circular at a screen edge or uses a
-  different clipped shape.
-- Whether a uniform mask clamp can be made acceptable if all dependent
-  geometry (corners, reticle, markings, readout) is shifted with it.
-- Whether the guest computes a lens centre/radius value elsewhere that can be
-  reused to generate correct edge geometry.
-- Whether replacing only the clipped half with extra geometry can avoid a
-  full-screen shader pass.
-
-## Candidate approaches for Astra
-
-These are alternatives, not a prescribed single solution.
-
-### 1. Coordinate clamp for the entire scope overlay
-
-Find the guest value that positions the lens centre. Clamp its effective X
-used by the mask to keep the full circular lens within a screen margin, and
-apply the same offset to the reticle, markings, ammo group and readout.
-
-Advantages:
-
-- Smallest rendering change.
-- Keeps the existing texture/state pipeline.
-- Easy to verify at one left and one right endpoint.
-
-Drawbacks:
-
-- The current mask geometry is still eight axis-aligned pieces.
-- A mask-only clamp detaches the lens from the reticle.
-- Clamping aim itself changes gameplay reach.
-- The 55.5-pixel test shows a simple mask-only shift is insufficient.
-
-### 2. Add edge-specific mask geometry
-
-Keep the current eight pieces for the normal case. When an inner edge leaves
-the viewport, add triangles or corner quads that form the partial circle
-against the screen edge.
-
-Advantages:
-
-- Localized to the edge case.
-- Avoids a toolkit-wide shader change.
-- Can preserve the current centre/lens mapping.
-
-Drawbacks:
-
-- Needs correct triangulation and blending at the join.
-- Must be built through the guest's reserve/batch path or a reliable renderer
-  override.
-- Multiple lens sizes or both scope renderers may need separate handling.
-
-### 3. Tessellated circular ring
-
-Replace the eight rectangular pieces with a triangle strip/fan sampled around
-the lens circle, clipped against the viewport.
-
-Advantages:
-
-- Mathematically handles full and partial lens shapes.
-- Can preserve a moving lens centre.
-- No per-pixel shader state.
-
-Drawbacks:
-
-- More geometry and a larger replacement of lifted draw behavior.
-- Blend state, vertex colour order and draw order must match exactly.
-- Needs careful capture/replay verification.
-
-### 4. Procedural screen-space circular mask
-
-Skip the guest mask pieces and run a Toolkit postprocess that computes alpha
-from the lens centre/radius.
-
-Advantages:
-
-- Exact circular/soft edge at any position.
-- Avoids geometric approximation.
-- Could expose a clean title-level API for scope masks.
-
-Drawbacks:
-
-- Requires Toolkit renderer/shader and capture/replay support.
-- Ordering matters because trailing in-game markers and HUD must remain above
-  the mask.
-- Needs offscreen-target and render-scale behavior.
-- Must be regression-tested across other titles.
-
-This is one viable route, not the only viable fix.
-
-### 5. Re-verify 4:3 and hardware behavior
-
-Capture the same aim angle in a true 4:3 run or against hardware/xemu before
-choosing a shape. This determines whether the rectangle is an original-game
-edge case exposed by widescreen or a recompilation-only artifact.
-
-This should be done before a large mask rewrite if access is available.
-
-## Regression checklist
-
-After any mask change, verify:
-
-1. Centre-aim scope:
-   - lens remains circular/rounded;
-   - crosshair/markings remain aligned;
-   - cartridge strip, white count, and black outline stay together.
-2. Left extreme:
-   - no rectangular exposed band;
-   - shade still covers the whole left and right sides;
-   - bullets still travel through the reticle.
-3. Right extreme:
-   - mirror behaviour of the left extreme.
-4. Hip-fire:
-   - cartridge row and number are in their normal HUD positions;
-   - no dark duplicate `10` on the scene;
-   - no viewmodel clipping.
-5. Vintage rifle:
-   - circular lens and full coverage remain intact.
-6. `RECOMP_WIDESCREEN=0`:
-   - original 4:3 HUD/scope behavior remains unchanged.
-7. Toolkit suite:
-   - all 31 tests still pass.
-
-## Non-negotiable rollback points
-
-- Do not regress the vintage scope: `checkpoint/vintage-scope-done`.
-- Do not regress the stretched-covered vintage checkpoint:
-  `checkpoint/vintage-scope-stretched-covered`.
-- Ammo readout fixes: `a6a6676`, `d1318eb`, `903bde1`.
-- Toolkit `SIDE` fix: `c9fd93a`.
-
-No gameplay change was made for the edge-mask investigation. The only retained
-changes added by this handoff are this document and
-`tools/scope_capture_probe.py`.
+Run timing regression:
+
+```bash
+python3 tools/regression/test_us_timing.py \
+  > build/engine-audit/scope-border-validation/timing-final.log
+```
+
+Inspect exact reticle/corner/mask geometry:
+
+```bash
+python3 tools/scope_capture_probe.py \
+  build/engine-audit/scope-border-validation/fixed-169/frame002.d3dcap \
+  --sites 000C2F03,000C2F37,000C2F62,000C2F88,000C2FAF,000C2FD6,000C2FFD,000C3025,000C3050,000C3096,000C30BF,000C30E8,000C3182,000C34D2,000C34E7 \
+  --vertices -1
+```
+
+Replay an old failure with its mask omitted:
+
+```bash
+RECOMP_WIDESCREEN=1 RECOMP_RES_SCALE=1 \
+  build/Release/xboxrecomp/src/replay/d3d8_replay \
+  build/engine-audit/scope-border-handoff/left-edge-untagged.d3dcap \
+  --no-scene --skip-draw 12 --present --quiet \
+  --out /tmp/scope-no-mask
+```
+
+## Artifact inventory
+
+Primary validation directory:
+
+```text
+/tmp/split2-engine-audit/build/engine-audit/scope-border-validation
+```
+
+Native and fixed captures:
+
+```text
+reference-43/frame000.d3dcap  centred native optic
+reference-43/frame001.d3dcap  left native optic
+reference-43/frame002.d3dcap  right native optic
+reference-43/frame003.d3dcap  low vertical aim
+reference-43/frame004.d3dcap  high vertical aim
+
+fixed-169/frame000.d3dcap   centred fixed optic
+fixed-169/frame001.d3dcap   left aim x=69
+fixed-169/frame002..006     right aim x=575, repeated captures
+fixed-169/frame007.d3dcap   aim x=459
+fixed-169/frame008.d3dcap   aim x=434, shot-check run
+fixed-169/frame009.d3dcap   aim x=455, final shot-check run
+```
+
+Visual evidence:
+
+```text
+fixed-169/last.png
+last-reticle-crop.png
+fixed-169/contact.jpg
+fixed-169/shot-contact.jpg
+flat/difference-contact.jpg
+review-contact.jpg
+replay-vintage000.bmp
+fixed-169/frame008.bmp
+```
+
+Analysis tools:
+
+```text
+tools/regression/test_us_scope.py
+tools/scope_capture_probe.py
+build/engine-audit/scope-border-validation/flat_masks.py
+build/engine-audit/scope-border-validation/replay_validation.py
+build/engine-audit/scope-border-validation/run-game.py
+build/engine-audit/scope-border-validation/siberia.seq
+build/engine-audit/scope-border-validation/siberia-b.seq
+build/engine-audit/scope-border-validation/siberia-c.seq
+```
+
+Historical failure artifacts:
+
+```text
+build/engine-audit/scope-border-handoff/left-edge-symptom.jpg
+build/engine-audit/scope-border-handoff/right-edge-symptom.jpg
+build/engine-audit/scope-border-handoff/attempt-outer-edge-extension.jpg
+build/engine-audit/scope-border-handoff/attempt-corner-placement.jpg
+build/engine-audit/scope-border-handoff/attempt-lens-shift.jpg
+build/engine-audit/scope-border-handoff/hip-tagged.d3dcap
+build/engine-audit/scope-border-handoff/hip-tagged.bmp
+```
+
+All captures contain game data and are intentionally under ignored `build/`.
+Do not add them to Git.
+
+## Remaining regression checklist for DeepSeek Flash
+
+These are routine tests. No advanced renderer work is required unless one
+fails.
+
+1. Run the build, geometry, synthetic replay, CTest and timing commands above.
+2. Launch the final binary with `RECOMP_WIDESCREEN=0`, use an isolated save,
+   and press F11 at centred, full-left and full-right modern-sniper aim.
+   Confirm the 4:3 aperture is unchanged and the transform does not activate.
+3. In 16:9, hold the vintage rifle and capture centred/left/right scopes.
+   Confirm both sides remain covered and the lens/crosshair remain aligned.
+4. In 16:9 hip-fire, capture the ordinary sniper HUD. Confirm cartridge row,
+   white count and black outline stay together in the normal HUD corner.
+5. Fire one shot at a flat wall at each horizontal extreme. Confirm the impact
+   remains at the rendered reticle after recoil settles.
+6. Check render scales 2× and 3×. The synthetic 3× right-edge mask replay is
+   already pixel-identical; this step checks the complete live frame.
+7. Re-read `git diff --check`, run the tests once more, and prepare the PR.
+
+Useful manual launch command:
+
+```bash
+cd /tmp/split2-engine-audit/build/Release
+
+RECOMP_GAME_DIR=/tmp/split2-scope-live.xdrDlk/game \
+RECOMP_USER_DIR=/tmp/split2-scope-live.xdrDlk/profile \
+RECOMP_MUTE=1 RECOMP_FPS_CAP=60 RECOMP_RES_SCALE=1 \
+RECOMP_WIDESCREEN=0 RECOMP_ASPECT_RATIO=4:3 \
+RECOMP_TS2_UI_SITES=1 ./split2_recomp
+```
+
+## Risks and cleanup
+
+The fix deliberately reuses guest call sites and wrappers. It is narrowly
+gated to the one modern-sniper renderer invocation and only activates in
+widescreen.
+
+Items worth reviewing in the PR:
+
+- The fourth argument is currently tested as nonzero. The only generated call
+  site passes exactly `1`; tightening this to `== 1` would make future
+  contract changes explicit but is not required for current behaviour.
+- `sub_001B5E80` excludes the already-transformed glyph return
+  `0x001AB3FA` and the full-screen tint `0x000C31F3`. New drawing paths added
+  to the modern renderer would need to be classified.
+- The transform moves X only. That is correct for this title's horizontal
+  aspect correction and is intentionally independent of Y.
+- Dimensions other than 16:9 use the same aspect formula but have not received
+  dedicated live captures.
+- Captures and synthetic scripts live under ignored `build/`; a fresh clone
+  needs the listed artifacts before the capture-based regression tool can run.
+
+No code was changed in `xboxrecomp`, and no procedural/tessellated mask work
+should be started. If a new edge failure appears, first prove whether its X
+coordinates are being transformed before the guest's visibility/clipping tests
+and whether all dependent draws are submitted as `STRETCH`. That ordering was
+the actual defect.
