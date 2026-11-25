@@ -8,7 +8,7 @@ The modern sniper scope edge issue is fixed in commit:
 2e30a55 Align the sniper scope before widescreen clipping
 ```
 
-The uncapped minigun spin-up issue is fixed in the latest commit:
+The uncapped minigun spin-up issue is fixed in commit:
 
 ```text
 f176093 Restore minigun spin-up in uncapped gameplay
@@ -35,6 +35,15 @@ follow-ups remain:
 Those are documented below and should not be conflated with the completed
 scope or minigun spin fixes. Direct 4:3, vintage-rifle and hip-fire regression
 captures remain routine PR work.
+
+Draft PR #57 is open for review visibility:
+
+```text
+https://github.com/phobos665/split2-recomp/pull/57
+```
+
+It intentionally remains a draft because the uncapped minigun overheat issue
+is unresolved and the branch overlaps the smaller open PRs #52–#55.
 
 ## Current repository state
 
@@ -100,7 +109,7 @@ sha256 3e41a53fc9325057c61625627a45eec213e0e35b38c433a53031c1fdbcb38b91
 
 The branch is 49 commits ahead of upstream `main` at `7a3345f`. Open upstream
 PRs #52 through #55 cover smaller subsets of the same audit. The comprehensive
-branch should be opened as a **draft** until its known uncapped follow-ups are
+branch is open as **draft** PR #57 until its known uncapped follow-ups are
 resolved and the maintainer decides whether to prefer the combined branch or
 the smaller PRs.
 
@@ -1182,26 +1191,29 @@ Open PRs #52 through #55 cover smaller subsets of this audit:
 
 The comprehensive branch is a 49-commit superset and includes additional US
 menu, timing, scope-edge and minigun work. A combined PR is useful for review
-visibility, but should be opened as a draft because the minigun overheat
+visibility, so it was opened as draft PR #57 because the minigun overheat
 follow-up remains unresolved and the maintainer may prefer the smaller PRs.
+At handoff time GitHub reports it as mergeable with no CI checks reported:
 
-Push and open the Draft PR from the repository root:
-
-```bash
-git push -u fork fix/comprehensive-engine-audit
-
-gh pr create \
-  --repo phobos665/split2-recomp \
-  --base main \
-  --head Sellot4pe:fix/comprehensive-engine-audit \
-  --draft \
-  --title "Comprehensive US widescreen and uncapped engine audit" \
-  --body-file build/engine-audit/pr-body.md
+```text
+https://github.com/phobos665/split2-recomp/pull/57
+#57 Comprehensive US widescreen and uncapped engine audit
+Draft: yes
+Mergeable: MERGEABLE
 ```
 
-The PR body must explicitly state that it overlaps #52–#55, document the known
-minigun overheat follow-up, and avoid claiming the uncapped knockback or
-sci-fi pistol bob is resolved.
+Verify its current state from the repository root:
+
+```bash
+gh pr view 57 --repo phobos665/split2-recomp \
+  --json url,title,isDraft,state,mergeable,baseRefName,headRefName
+```
+
+The PR body explicitly states that it overlaps #52–#55, documents the known
+minigun overheat follow-up, and does not claim the uncapped knockback or
+sci-fi pistol bob is resolved. Keep the PR in draft until maintainers choose
+between the combined and smaller-PR strategies and the known uncapped issues
+have been addressed or accepted as follow-ups.
 
 ## Risks and cleanup
 
