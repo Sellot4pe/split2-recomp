@@ -56,6 +56,9 @@ shade at `0x000CA58E` has drawn in the current frame, both shared HUD sites
 are explicitly kept in the centred layout. Outside the scope they remain
 `SIDE`, so the ordinary hip-fire HUD is unchanged.
 
+The count's black outline is a separate draw at `0x000BE5CF`. It follows the
+same scope-only centred rule as the white glyphs and cartridge strip.
+
 Verified by replaying the saved scope capture: the row moved from x=117..149
 to x=197..229, leaving a 16-pixel gap before the count. The hip-fire capture
 was pixel-identical. Two live F11 captures with the patched build showed the
@@ -65,6 +68,24 @@ kept the strip and count together. All 31 toolkit tests pass.
 
 The earlier attempts to pin `c64` around the reserve (`1d6e91c`) and flush
 (`d424e00`) targeted the wrong layer and were correctly reverted.
+
+## Remaining: sniper lens edge at aim limits
+
+The sniper shade is an eight-piece geometric mask around a circular lens,
+unlike the vintage rifle's textured mask hole. When the lens approaches a
+screen edge, its inner bounds leave the viewport (for example, a right-edge
+capture had the lens spanning x=377..645.5) and the top and bottom pieces
+reduce the visible lens to a rectangular band.
+
+The vintage fix does not transfer directly. Extending this mask's outer
+edges beyond the viewport changed zero pixels because those edges already
+meet the screen. Moving the corner and alpha-mask sites from `CENTRE` to
+`STRETCH` was tested live; it changed the corner gradients but left the
+rectangular cut and was reverted.
+
+A real fix needs either a tessellated/procedural circular hole at the lens
+edge or clamping the lens's travel while keeping its centre aligned with the
+aim. Neither is implemented.
 
 ## Also remaining: low-resolution screen-copy effects
 
