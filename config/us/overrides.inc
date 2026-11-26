@@ -214,24 +214,90 @@ void sub_000B72F0(void)
  * makes the pulse absent from most rendered frames; the minigun spin-up
  * then follows its decay path instead of accumulating elapsed time. Keep
  * the pulse visible to this one animation update while the trigger remains
- * held, without changing the action state seen by any other subsystem. */
+ * held, without changing the action state seen by any other subsystem.
+ *
+ * The same pulse also drives the type-5 thermal branch at B4288. Applying
+ * it on every render frame overheats the minigun, while removing it entirely
+ * lets continuous cooling dominate. Preserve shot heat from B35C0, but after
+ * this call replace 000B3E10's heat result with its canonical whole-tick
+ * map. Zero-tick renders leave heat unchanged; whole-tick renders use the
+ * native cool/warm terms once per logical tick. The 60 Hz path is unchanged. */
+static float ts2_us_minigun_shot_heat(float heat, uint32_t mode)
+{
+    double linear = mode == 0u ? 0.016 : 0.012;
+    double scale = mode == 0u ? 0.012 : 0.011;
+
+    heat = (float)((double)heat + linear + scale * (double)heat);
+    return heat > 1.0f ? 1.0f : heat;
+}
+
+static float ts2_us_minigun_tick_heat(float heat, uint32_t mode,
+                                      uint32_t shots, int pulse,
+                                      uint32_t ticks)
+{
+    double d = (double)ticks / 60.0;
+    double cooled;
+
+    while (shots--)
+        heat = ts2_us_minigun_shot_heat(heat, mode);
+
+    cooled = (double)heat - 0.12 * d;
+    cooled -= (1.05 - cooled) * 0.15 * d;
+    if (cooled < 0.0)
+        cooled = 0.0;
+
+    if (cooled < 0.5) {
+        if (mode == 1u)
+            cooled += 0.9 * (0.5 - cooled) * d;
+        else if (pulse)
+            cooled += 0.203 * d;
+    }
+    if (cooled > 1.0)
+        cooled = 1.0;
+    return (float)cooled;
+}
+
 extern void sub_000B3E10_gen(void);
 void sub_000B3E10(void)
 {
     uint32_t held = TS2_MEM32(g_esp + 4u);
     uint32_t action = g_esi;
+    int minigun = held && TS2_MEM32(held + 0x30u) == 5u && action;
+    float heat_value_before = minigun ? TS2_MEMF(held + 0xCCu) : 0.0f;
+    uint32_t pulse_before = minigun ? TS2_MEM32(action + 0x50u) : 0;
+    uint32_t counter_before = minigun ? TS2_MEM32(action + 0xD0u) : 0;
+    uint32_t step = TS2_MEM32(TS2_US_GAME_STEP);
+    uint32_t mode = minigun ? TS2_MEM32(action + 0x30u) : ~0u;
+    int synthetic = minigun && g_ts2_us_free_step && step == 0u &&
+                    TS2_MEM32(action + 0x4Cu) != 0u && pulse_before == 0u;
+    int split_heat = minigun && g_ts2_us_free_step &&
+                     (mode == 0u || mode == 1u);
 
-    if (g_ts2_us_free_step && TS2_MEM32(TS2_US_GAME_STEP) == 0u &&
-        held && TS2_MEM32(held + 0x30u) == 5u &&
-        action && TS2_MEM32(action + 0x4Cu) != 0u) {
-        uint32_t saved = TS2_MEM32(action + 0x50u);
+    if (synthetic) {
+        uint32_t saved = pulse_before;
 
         TS2_MEM32(action + 0x50u) = 1u;
         sub_000B3E10_gen();
         TS2_MEM32(action + 0x50u) = saved;
-        return;
+    } else {
+        sub_000B3E10_gen();
     }
-    sub_000B3E10_gen();
+
+    if (split_heat) {
+        uint32_t counter_after = TS2_MEM32(action + 0xD0u);
+        uint32_t shots = counter_after >= counter_before ?
+                         counter_after - counter_before : 0u;
+        int pulse = pulse_before != 0u || TS2_MEM32(action + 0x50u) != 0u;
+
+        /* A shot is a whole-tick event. If its count moved by more than
+         * this call's logical span, leave the generated result alone rather
+         * than guessing across a weapon-lifetime reset. Zero-tick renders
+         * have no thermal opportunity at all. */
+        if (shots <= step)
+            TS2_MEMF(held + 0xCCu) =
+                ts2_us_minigun_tick_heat(heat_value_before, mode,
+                                         shots, pulse, step);
+    }
 }
 
 /* Sample the player position and the bob outputs together so a stepped
@@ -258,8 +324,10 @@ void sub_00140E10(void)
 }
 
 /* 001B9E80 samples the pad and writes newly pressed buttons at +0x28.
- * Keep face-button presses until a gameplay tick can consume them.
- * The game's button mapping uses bits 0x10..0x80 for A/B/X/Y. */
+ * Keep every newly pressed button until a gameplay tick can consume it.
+ * The game maps analogue A/B/X/Y, black, white and both triggers into
+ * different bits of the same field; preserving only 0xF0 loses the
+ * minigun's secondary-fire edge above 60 FPS. */
 extern void sub_001B9E80_gen(void);
 void sub_001B9E80(void)
 {
@@ -267,7 +335,6 @@ void sub_001B9E80(void)
     uint32_t port = TS2_MEM32(g_esp + 4u);
     uint32_t pad = TS2_MEM32(g_esp + 8u);
     uint32_t pressed;
-    const uint32_t face_buttons = 0xF0u;
 
     sub_001B9E80_gen();
     if (port >= sizeof pending / sizeof pending[0])
@@ -277,9 +344,9 @@ void sub_001B9E80(void)
         return;
     }
     pressed = TS2_MEM32(pad + 0x28u);
-    pending[port] |= pressed & face_buttons;
+    pending[port] |= pressed;
     if (TS2_MEM32(TS2_US_GAME_STEP) == 0u) {
-        TS2_MEM32(pad + 0x28u) = pressed & ~face_buttons;
+        TS2_MEM32(pad + 0x28u) = 0;
     } else {
         TS2_MEM32(pad + 0x28u) = pressed | pending[port];
         pending[port] = 0;
