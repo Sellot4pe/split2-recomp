@@ -278,10 +278,20 @@ Uncapped knockback and sci-fi pistol bob remain separate, unmodified issues.
 
 ### PR state
 
-Commit `72a62fd` belongs on the existing stacked draft PR cycle, most directly
-PR #57 (`Restore minigun spin-up in uncapped US gameplay`). Verify GitHub state
-before pushing; do not open a duplicate PR. The change relies on the audited
-free-step producer in `1178411`, not on the older standalone cap heuristic.
+The focused draft PR is:
+
+```text
+https://github.com/Sellot4pe/split2-recomp/pull/1
+#1 Fix minigun heat and secondary fire above 60 FPS
+Base: stack/audited-uncapped-timing @ 1178411
+Head: pr/us-minigun-thermal-stacked (this PR)
+Draft: yes
+```
+
+It is intentionally a stacked PR because a standalone port to current `main`
+reintroduces render-coupled simulation speed when uncapped. The old upstream
+PR #57 is not authoritative until the timing prerequisite has an upstream PR
+and lands.
 
 Do not add these untracked consultation/user files to the PR:
 
