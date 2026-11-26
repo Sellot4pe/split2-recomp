@@ -1,6 +1,299 @@
 # TimeSplitters 2 — comprehensive US engine audit handoff
 
-## Status
+## Current status — 2026-11-26 minigun thermal fix
+
+The uncapped minigun overheat and secondary-fire failures are fixed in:
+
+```text
+72a62fd Decouple minigun heat from render cadence
+```
+
+Branch:
+
+```text
+fix/minigun-thermal-overheat
+HEAD      Document minigun thermal timing fix
+72a62fd  Decouple minigun heat from render cadence
+1178411  Split the scope and minigun reviews in the handoff
+f176093  Restore minigun spin-up in uncapped gameplay
+```
+
+Toolkit submodule remains clean at `xboxrecomp c9fd93a`. The final Release
+binary was built from this stack:
+
+```text
+build/Release/split2_recomp
+sha256 38d4398ea7445d1be7943159b8b411d1c7bc3e44cceb9b2e183769d67d77c193
+```
+
+This completed work supersedes every older minigun overheat/remaining-work
+statement below. Older sections are retained as investigation history and as
+evidence for the scope, widescreen, timing and spin fixes. They are not the
+current branch/state snapshot.
+
+### Root causes
+
+There were two independent high-rate defects.
+
+1. `sub_000B3E10` uses `action+0x50` for both the minigun spin predicate and
+   its type-5 thermal warm-up. The committed spin wrapper correctly
+   synthesized that pulse on zero-tick render frames, but this also warmed
+   heat on every render. At 60 FPS the thermal pulse had the game's natural
+   firing duty cycle; above 60 FPS it was effectively continuous. Removing
+   the synthetic pulse entirely was not a fix: it made the primary map too
+   cold and delayed heat denial to roughly round 86, with no-pulse archives
+   doing still worse.
+
+2. `sub_001B9E80` converts raw controller state into a game button mask and
+   writes newly pressed bits at pad `+0x28`. The elapsed-time wrapper retained
+   only `0xF0` between render frames. That mask covers analogue A/B/X/Y, but
+   the game maps black, white and both triggers to other mask bits. The
+   minigun's secondary toggle consumes a newly pressed edge in `sub_000B6020`;
+   above 60 FPS that edge was cleared before the next whole gameplay tick.
+   Preserving every newly pressed bit fixes it.
+
+### Implementation
+
+Only these committed files changed:
+
+```text
+config/us/overrides.inc
+tools/regression/test_us_minigun_heat.py
+```
+
+`config/us/overrides.inc` now:
+
+- keeps the existing `action+0x50` synthesis for minigun spin;
+- preserves `held+0xCC` shot heat applied by `sub_000B35C0`;
+- restores heat unchanged on zero-tick type-5 renders;
+- on whole-tick type-5 renders, replaces the generated heat result with one
+  canonical tick map for modes 0 and 1;
+- applies the original mode-specific accepted-shot impulse for each counter
+  increment at `action+0xD0`;
+- preserves the guest `0.5` background-warm threshold and `1.0` clamp;
+- leaves the 60 FPS and 30 FPS paths untouched;
+- buffers all newly pressed controller bits in `sub_001B9E80` until a whole
+  tick, rather than buffering only `0xF0`.
+
+The canonical thermal map is:
+
+```c
+d = logical_ticks / 60.0
+
+// Accepted shot(s), before the pose update:
+mode 0: H = min(1, H + 0.016 + 0.012 * H)
+mode 1: H = min(1, H + 0.012 + 0.011 * H)
+
+u = H - 0.12 * d
+H = max(0, u - (1.05 - u) * 0.15 * d)
+
+if (H < 0.5) {
+    if (mode == 1)
+        H = min(1, H + 0.9 * (0.5 - H) * d);
+    else if (native_pulse)
+        H = min(1, H + 0.203 * d);
+}
+```
+
+The wrapper-level heat replacement is safe on the zero-tick path because
+`game_step == 0` prevents `sub_000B3E10` from reaching its nested
+`sub_000B35C0` attempt. Type 5 does not read `held+0xCC` again later in that
+call. On whole ticks, the wrapper reads the `action+0xD0` delta, so an
+accepted attempt made inside `sub_000B3E10` retains its shot heat. If the
+counter moves farther than the logical span, as during a lifetime reset, the
+generated result is left intact rather than guessed.
+
+Relevant guest state:
+
+```text
+held+0x30 == 5          minigun animation type
+held+0xCC               authoritative heat
+action+0x30             mode: 0 primary, 1 secondary/pre-spin
+action+0x4C             persistent trigger held
+action+0x50             firing/thermal pulse
+action+0x70/+0x74       spin phase/rate
+action+0xD0             shot-path counter
+0x0034889C/+0x003488A4  whole/fractional game step
+```
+
+### Verification completed
+
+The temporary trace probe was removed before the final build. It recorded
+`sub_000B35C0` before/after heat and `sub_000B3E10` before/after heat, mode,
+pulse, rate, counter and logical step in the named logs below.
+
+Primary-fire results:
+
+```text
+60 FPS reference, round 1 heat:       0.003383 -> 0.019424
+fixed uncapped, round 1 heat:         0.003383 -> 0.019424
+
+60 FPS reference, round 60 heat:      0.391898 -> 0.412600
+fixed uncapped, round 60 heat:        0.391897 -> 0.412600
+
+60 FPS reference, round 97 heat:      0.886450 -> 0.913087
+fixed uncapped, round 97 heat:        0.886449 -> 0.913087
+
+first heat-denied attempt at both:    round 97, H = 0.906028
+```
+
+Every measured milestone through round 100 agrees within `1e-6`. Accepted
+shot deadlines also match the 60 FPS reference in logical ticks (the trace
+start alignment differs by one tick). Of 8,619 synthetic zero-tick poses in
+the uncapped log, zero changed heat. Post-release cooling matches the native
+cooling map with maximum observed error below `3e-8`.
+
+Secondary/pre-spin results:
+
+- before the input fix, no uncapped run entered mode 1;
+- after broadening the input buffer, uncapped secondary reached mode 1,
+  accumulated heat without incrementing the shot counter, and settled near
+  `H = 0.23445`;
+- primary fire in mode 1 then accepted 62 rounds at uncapped rates without an
+  early heat denial.
+
+Regression results on the final stack:
+
+```text
+31/31 toolkit tests passed
+US timing fixture passed at 30, 60, 120, 144, 317 and 719 FPS
+all 10 tagged 16:9 sniper-scope captures passed against the 4:3 reference
+python -m py_compile passed
+git diff --check passed
+```
+
+### Evidence paths
+
+Instrumented logs:
+
+```text
+build/engine-audit/minigun-investigation/baseline-60-trace.log
+build/engine-audit/minigun-investigation/fix1-60-trace.log
+build/engine-audit/minigun-investigation/fix1-uncapped-trace.log
+build/engine-audit/minigun-investigation/fix1-uncapped-secondary-trace.log
+build/engine-audit/minigun-investigation/fix2-uncapped-secondary-trace.log
+```
+
+`fix1-uncapped-secondary-trace.log` is the useful failed-secondary control;
+`fix2-uncapped-secondary-trace.log` is the passing run after the input fix.
+
+Diagnostic/test logs:
+
+```text
+build/engine-audit/minigun-investigation/build-final.log
+build/engine-audit/minigun-investigation/ctest-final.log
+build/engine-audit/minigun-investigation/timing-final.log
+build/engine-audit/minigun-investigation/scope-final.log
+```
+
+Run the archived trace comparison:
+
+```bash
+cd /tmp/split2-engine-audit
+python3 tools/regression/test_us_minigun_heat.py
+```
+
+The script expects the trace files above. They are under ignored `build/` and
+must not be added to the PR.
+
+### Exact build and test commands
+
+```bash
+cd /tmp/split2-engine-audit
+
+/home/conor/.venvs/recomp/bin/python scripts/build.py \
+  --region us --relift --from lift --no-build
+cmake --build build/Release -j6
+
+python3 tools/regression/test_us_minigun_heat.py
+python3 tools/regression/test_us_timing.py
+python3 tools/regression/test_us_scope.py \
+  build/engine-audit/scope-border-validation/reference-43/frame000.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame000.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame001.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame002.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame003.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame004.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame005.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame006.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame007.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame008.d3dcap \
+  build/engine-audit/scope-border-validation/fixed-169/frame009.d3dcap
+
+ctest --test-dir /tmp/split2-xboxrecomp-tests --output-on-failure -j6
+git diff --check
+```
+
+Live uncapped launch:
+
+```bash
+cd /tmp/split2-engine-audit
+
+RECOMP_GAME_DIR=/tmp/split2-scope-live.xdrDlk/game \
+RECOMP_USER_DIR=/tmp/split2-minigun-debug/profile \
+RECOMP_MUTE=1 SDL_AUDIO_DRIVER=dummy \
+RECOMP_WINDOW_BACKGROUND=1 RECOMP_FULLSCREEN=0 \
+RECOMP_FPS_CAP=0 RECOMP_RES_SCALE=1 \
+RECOMP_WIDESCREEN=1 RECOMP_ASPECT_RATIO=16:9 \
+build/Release/split2_recomp
+```
+
+At cap 60 use `RECOMP_FPS_CAP=60`. In Siberia:
+
+1. Cold primary hold: first heat denial must be after accepted round 97 when
+   ammo remains, then sustained hold resumes shots as heat cools below 0.9.
+2. Release and recool: heat must follow the native decay curve and zero.
+3. Secondary hold: it must enter auto-spin mode above 60 FPS; primary fire in
+   that mode must use the mode-1 heat formula.
+4. Cap switch during fire and cooling: spin should stay near 0.9 s to full,
+   heat should not jump, and no catch-up burst should occur.
+5. 30 FPS and an uneven 0/1/2/3-tick trace: verify the same shot deadlines as
+   the timing fixture and inspect the first frame with a multi-tick jump.
+
+### Remaining work and risks
+
+No fundamental minigun defect remains. Routine follow-up for DeepSeek Flash:
+
+- run final-binary live checks at 120 and 144 FPS and a cap switch during a
+  burst/cooldown;
+- repeat the secondary toggle several times at each cap, including press and
+  release while moving, to ensure preserving all new-button bits has no
+  duplicate-edge effect;
+- verify pause/menu transitions do not consume a stale buffered edge;
+- run the existing 4:3, vintage-scope and hip-fire checks before PR update;
+- update the PR description once these pass.
+
+The broadened `sub_001B9E80` buffer is gated by `g_ts2_us_free_step`, which is
+active only for eligible gameplay above 60 FPS. The menus retain their
+vblank/edge path. If a regression appears, capture which consumed action
+fired twice; do not narrow the mask back to `0xF0`, because that recreates the
+secondary/trigger failure.
+
+The heat replacement deliberately uses the wrapper boundary. If future guest
+code adds a type-5 heat read after the native thermal slice or a second heat
+writer inside `sub_000B3E10`, move the split to the actual thermal slice.
+Current US code has neither.
+
+Uncapped knockback and sci-fi pistol bob remain separate, unmodified issues.
+
+### PR state
+
+Commit `72a62fd` belongs on the existing stacked draft PR cycle, most directly
+PR #57 (`Restore minigun spin-up in uncapped US gameplay`). Verify GitHub state
+before pushing; do not open a duplicate PR. The change relies on the audited
+free-step producer in `1178411`, not on the older standalone cap heuristic.
+
+Do not add these untracked consultation/user files to the PR:
+
+```text
+ASTRA_CONSULT.md
+ASTRA_RESPONSE.md
+replay000.bmp
+```
+
+---
+
+## Historical status before the 2026-11-26 minigun thermal fix
 
 The modern sniper scope edge issue is fixed in commit:
 
@@ -24,11 +317,11 @@ native-mask replays. The user also visually confirmed the final right-edge and
 bullet-impact frames. The uncapped minigun reaches its full spin rate in
 0.901 seconds, within 0.001 seconds of the 60 FPS reference.
 
-No unresolved fundamental rendering problem is known. Three separate uncapped
-follow-ups remain:
+At the historical point of this section, no unresolved fundamental rendering
+problem was known. Three separate uncapped follow-ups remained:
 
 - minigun overheat occurs after about 64 rounds at uncapped rates versus about
-  100 rounds at 60 FPS;
+  100 rounds at 60 FPS (resolved by `72a62fd`);
 - player knockback appears much stronger while uncapped;
 - the sci-fi pistol weapon bob appears jerky while uncapped.
 
@@ -53,12 +346,11 @@ https://github.com/phobos665/split2-recomp/pull/57
 Draft: yes
 ```
 
-The minigun review intentionally remains a draft because the uncapped
-overheat issue is unresolved. It depends on timing changes that are still
-represented by other open PRs, so GitHub may show those prerequisite commits
-until they land; `f176093` is the substantive minigun change.
+At the time of that historical snapshot, the minigun review remained a draft
+because the uncapped overheat issue was unresolved. That issue is now fixed
+by `72a62fd`; see the current status at the top of this file.
 
-## Current repository state
+## Historical repository state before the 2026-11-26 minigun thermal fix
 
 Repository:
 
@@ -148,7 +440,7 @@ PR #57 cannot yet be reduced to a one-commit diff against `main` because
 Once its prerequisite PRs merge, retain `f176093` and rebase the minigun PR
 onto the updated `main`; do not duplicate the prerequisite implementations.
 
-## Latest uncapped minigun work
+## Historical uncapped minigun spin-up work
 
 ### Symptom and reproduction
 
@@ -1046,8 +1338,9 @@ RECOMP_WIDESCREEN=1 RECOMP_ASPECT_RATIO=16:9 \
 ```
 
 Hold primary fire on the minigun from rest. Confirm the barrels reach full
-speed in about 0.9 seconds. Repeat at 60 FPS. The known overheat discrepancy
-is a separate unresolved task; do not treat it as a spin-up failure.
+speed in about 0.9 seconds. Repeat at 60 FPS. At the historical point when
+this paragraph was written, the overheat discrepancy was unresolved; the
+current fix and its expected round-97 denial are documented at the top.
 
 Inspect exact reticle/corner/mask geometry:
 
@@ -1147,23 +1440,17 @@ build/engine-audit/minigun-investigation/user-minigun-frames.jpg
 All captures contain game data and are intentionally under ignored `build/`.
 Do not add them to Git.
 
-## Remaining advanced work for Astra
+## Remaining advanced work for Astra (unrelated follow-ups)
 
 These tasks need judgement or further reverse engineering. They are not
 required to validate the completed scope fix.
 
-1. **Uncapped minigun overheat timing**
+1. **Uncapped minigun overheat timing — resolved**
 
-   Current committed behaviour is about 64 rounds to overheat at uncapped
-   rates versus 100 rounds at 60 FPS. The shared `0x000B3E10` firing-pulse
-   wrapper fixes spin but affects heat as well. Do not simply remove the pulse:
-   the tested no-pulse and hybrid variants either nearly prevented overheat or
-   broke firing-pose progression.
-
-   Identify the exact heat value and state transitions first. The
-   `overheat-*.log` files record action state, shot counter, `held+0xC8`,
-   `held+0xCC`, `held+0xD0`, action fields `+0x68/+0x70/+0x74/+0x78/+0xD4`,
-   and `game_step`.
+   `72a62fd` separates whole-tick thermal work from the spin pulse and fixes
+   the lost secondary-button edge. The original evidence remains in the
+   `overheat-*.log` files; use the current status section rather than the old
+   experimental conclusions.
 
 2. **Uncapped knockback**
 
@@ -1196,8 +1483,8 @@ fails.
 6. Check render scales 2× and 3×. The synthetic 3× right-edge mask replay is
    already pixel-identical; this step checks the complete live frame.
 7. Check the minigun at 60 FPS and uncapped: spin-up must remain about
-   0.9 seconds. Record overheat as a known follow-up rather than a regression
-   of the spin fix.
+   0.9 seconds, primary heat first denies at accepted round 97 with ammo
+   available, and secondary must enter mode 1 at both caps.
 8. Re-read `git diff --check`, run the tests once more, and prepare the PR.
 
 Useful manual launch command:
@@ -1273,9 +1560,9 @@ Items worth reviewing in the PR:
   persistent held-trigger value, but it intentionally restores the transient
   firing pulse after `0x000B3E10` so other subsystems do not observe the
   forced value.
-- The minigun spin fix and the known overheat discrepancy share the same
-  firing-pose branch. Review them together, but do not regress the measured
-  0.900/0.901-second spin ramp.
+- The minigun spin and heat fixes share the same firing-pose branch. Review
+  them together, but do not regress the measured 0.900/0.901-second spin ramp,
+  round-97 thermal milestone or uncapped secondary toggle.
 
 No code was changed in `xboxrecomp`, and no procedural/tessellated mask work
 should be started. If a new edge failure appears, first prove whether its X
