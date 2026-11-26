@@ -89,8 +89,8 @@ Controllers work as an Xbox pad. The keyboard plays as controller 1:
 | Fire / alternate fire | Left / Middle mouse button |
 | Aim | Right mouse button |
 | D-pad | Arrows |
-| A, B, X, Y | Z, X, C, V |
-| Start, Back | Enter, Backspace |
+| A / interact, B, X / reload, Y | E, X, R, V |
+| Start, Select | Escape, Tab |
 | White, Black | Q, F |
 
 Change them in the launcher's Input tab.
